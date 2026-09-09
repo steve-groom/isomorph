@@ -866,6 +866,20 @@ def c_replicate (ctx, e):
     return '(' + ' | '.join(parts) + ')'
 
 
+def c_signed (text, e):
+    """An operand as int64_t, sign extended from its own width.
+
+    signed() only marks an expression; the bits underneath are the same.
+    That is enough for + - and the bitwise operators, and not enough for
+    * and >>, where sign decides the answer."""
+    if not getattr(e, 'signed', False):
+        return f'((int64_t)({text}))'
+    sh = 64 - e.width
+    if sh <= 0:
+        return f'((int64_t)({text}))'
+    return f'((((int64_t)({text})) << {sh}) >> {sh})'
+
+
 def c_binop (ctx, e):
     op = e.value
     a, b = e.args
@@ -875,11 +889,14 @@ def c_binop (ctx, e):
     if op in ('&', '|', '^'):
         return f'(({left}) {op} ({right})) & {mask_expr(w)}'
     if op in ('+', '-', '*'):
-        return f'(({left}) {op} ({right})) & {mask_expr(w)}'
+        return (f'((uint64_t)({c_signed(left, a)} {op} '
+                f'{c_signed(right, b)})) & {mask_expr(w)}')
     if op == '<<':
         return f'(({left}) << ({c_expr(ctx, b, index = True)})) & {mask_expr(w)}'
     if op == '>>':
-        return f'(({left}) >> ({c_expr(ctx, b, index = True)})) & {mask_expr(w)}'
+        # arithmetic when the left operand is signed
+        return (f'((uint64_t)({c_signed(left, a)} >> '
+                f'({c_expr(ctx, b, index = True)}))) & {mask_expr(w)}')
     return f'(({left}) {op} ({right})) & {mask_expr(w)}'
 
 

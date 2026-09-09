@@ -573,10 +573,16 @@ def sv_expr (e, index = False):
     if op == 'replicate':
         return '{' + f'{e.value}{{{sv_expr(a[0])}}}' + '}'
     if op == 'binop':
+        token = e.value
+        if token == '>>' and getattr(a[0], 'signed', False):
+            # SystemVerilog >> is logical whatever the operand, so a
+            # signed right shift is >>>. VHDL's shift_right(signed(x))
+            # is already arithmetic, and the two must agree.
+            token = '>>>'
         if index:
-            return (f'{sv_expr(a[0], True)} {e.value} '
+            return (f'{sv_expr(a[0], True)} {token} '
                     f'{sv_expr(a[1], True)}')
-        return f'({sv_expr(a[0])} {e.value} {sv_expr(a[1])})'
+        return f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
     if op == 'cmp':
         return f'({sv_expr(a[0])} {e.value} {sv_expr(a[1])})'
     if op == 'unop':

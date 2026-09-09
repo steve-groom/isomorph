@@ -606,29 +606,45 @@ def eval_replicate (ctx, e):
     return acc & mask(e.width if e.width else n * w)
 
 
+def as_signed (value, e):
+    """The value an operand carries, negative when the expression is
+    signed and its top bit is set.
+
+    signed() only marks an expression; the bits underneath are the same.
+    That is enough for + - and the bitwise operators, whose two's
+    complement result is the same either way, and not enough for * and
+    >>, where sign decides the answer."""
+    w = e.width
+    v = int(value) & mask(w)
+    if getattr(e, 'signed', False) and w > 0 and (v & (1 << (w - 1))):
+        return v - (1 << w)
+    return v
+
+
 def eval_binop (ctx, e):
     op = e.value
     a, b = e.args
     w = e.width
     left = eval_expr(ctx, a)
     right = eval_expr(ctx, b)
-    if op == '<<':
-        return (int(left) << int(right)) & mask(w)
-    if op == '>>':
-        return (int(left) >> int(right)) & mask(w)
     if op == '&':
         return (int(left) & int(right)) & mask(w)
     if op == '|':
         return (int(left) | int(right)) & mask(w)
     if op == '^':
         return (int(left) ^ int(right)) & mask(w)
+    if op == '<<':
+        return (as_signed(left, a) << int(right)) & mask(w)
+    if op == '>>':
+        # arithmetic when the left operand is signed
+        return (as_signed(left, a) >> int(right)) & mask(w)
     if op == '+':
-        return (int(left) + int(right)) & mask(w)
+        return (as_signed(left, a) + as_signed(right, b)) & mask(w)
     if op == '-':
-        return (int(left) - int(right)) & mask(w)
+        return (as_signed(left, a) - as_signed(right, b)) & mask(w)
     if op == '*':
-        return (int(left) * int(right)) & mask(w)
-    return (int(left) + int(right)) & mask(w)
+        return (as_signed(left, a) * as_signed(right, b)) & mask(w)
+    return (as_signed(left, a) + as_signed(right, b)) & mask(w)
 
 
 def eval_call (ctx, e):
