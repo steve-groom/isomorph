@@ -88,6 +88,34 @@ class Elaborated:
             elif isinstance(value, Instances):
                 pass
         self.processes.sort(key = lambda p: p.func.__code__.co_firstlineno)
+        self._name_shared_types()
+
+    def _name_shared_types (self):
+        """An enum or struct declared at module scope, shared by several
+        blocks, is not a local of any of them. Recover its name from the
+        block's globals and declare it in every module that uses it, so
+        the emitted type is named rather than None."""
+        globals_of_block = getattr(self.func, '__globals__', {})
+        used = []
+        for value in list(self.signals.values()) + list(self.arrays.values()):
+            kind = getattr(value, 'type', None)
+            if isinstance(kind, EnumType):
+                used.append(kind)
+        for value in self.parameters.values():
+            if isinstance(value, EnumType):
+                used.append(value)
+        for kind in used:
+            if kind.name is None:
+                for name, candidate in globals_of_block.items():
+                    if candidate is kind:
+                        kind.name = name
+                        break
+            if kind.name is None:
+                raise IsomorphError(
+                    f'{self.block_name}: an enum used by this block has no '
+                    'name. Assign enum(...) to a variable, in the block or '
+                    'at module scope, before using it in signal().')
+            self.enums.setdefault(kind.name, kind)
 
     @property
     def module_name (self):
