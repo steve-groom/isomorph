@@ -146,13 +146,30 @@ def array_type_decl (tname, width, count):
     return (f'type {tname} is array (0 to {count - 1}) of {elem};')
 
 
+def width_parameter (params, width):
+    """The name of the parameter this width came from, or None.
+
+    A width is a plain int by the time it reaches the emitters, so the
+    only link back to a parameter is its value. Matching on value alone
+    renamed any width that happened to equal any parameter: a block with
+    AVMM_TIMEOUT = 16 and a 16-bit bus declared its ports as
+    [AVMM_TIMEOUT-1:0], and in VHDL that is a generic which would resize
+    them. So the value must match a parameter that is named as a width,
+    and it must be the only one, or the width is emitted as a literal.
+    A missed substitution costs readability; a wrong one costs silence."""
+    if not params or width <= 1:
+        return None
+    found = [name for name, value in params.items()
+             if isinstance(value, int) and not isinstance(value, bool)
+             and value == width and 'WIDTH' in name.upper()]
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
 def sl_bound (params, width):
-    if params:
-        for name, value in params.items():
-            if (isinstance(value, int) and not isinstance(value, bool)
-                    and value == width):
-                return f'{name} - 1'
-    return str(width - 1)
+    name = width_parameter(params, width)
+    return f'{name} - 1' if name else str(width - 1)
 
 
 def sl_type (width, kind = 'vector', typ = None, params = None):
