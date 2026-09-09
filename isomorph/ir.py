@@ -112,6 +112,7 @@ class Port:
     array: int = 0
     comments: list = field(default_factory = list)
     trailing: str = None
+    attributes: dict = field(default_factory = dict)
 
 
 @dataclass

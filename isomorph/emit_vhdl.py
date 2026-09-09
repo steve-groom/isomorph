@@ -257,6 +257,21 @@ def entity_lines (m):
         lines.append('  port (')
         lines += port_lines(m)
         lines.append('  );')
+    # a port's attributes belong in the entity declarative part, which
+    # is the only place a port name is visible to declare them against
+    seen = set()
+    decls = []
+    specs = []
+    for p in m.ports:
+        for key, value in p.attributes.items():
+            if key == 'unused':
+                continue
+            if key not in seen:
+                seen.add(key)
+                decls.append(f'  attribute {key} : string;')
+            lit = '"true"' if value is True else f'"{value}"'
+            specs.append(f'  attribute {key} of {p.name} : signal is {lit};')
+    lines += decls + specs
     lines.append(f'end entity {m.name};')
     return lines
 
@@ -361,12 +376,18 @@ def signal_lines (m):
 
 
 def attribute_lines (m):
-    """Vendor attributes on signals (SPEC 5.4, 5.12)."""
+    """Vendor attributes on signals (SPEC 5.4, 5.12).
+
+    An attribute the entity already declared for a port is visible
+    here, and redeclaring it is an error."""
     decls = []
     specs = []
-    seen = set()
+    seen = {key for p in m.ports for key in p.attributes
+            if key != 'unused'}
     for s in m.signals:
         for key, value in s.attributes.items():
+            if key == 'unused':
+                continue
             if key not in seen:
                 seen.add(key)
                 decls.append(f'  attribute {key} : string;')
@@ -920,6 +941,13 @@ def vhdl_slice (ctx, e):
     if base.op not in ('ref', 'bit', 'slice', 'part', 'part_down', 'field',
                        'concat', 'replicate'):
         inner = vhdl_expr(ctx, base)
+        if e.width == 1:
+            # a one-bit value is std_logic here, and a one-element vector
+            # will not match it. resize is a function, so it may be
+            # indexed; a type conversion may not, hence no
+            # std_logic_vector() around it.
+            low = e.value[1] if len(e.args) < 3 else 0
+            return f'resize(unsigned({inner}), {low + 1})({low})'
         return f'std_logic_vector(resize(unsigned({inner}), {e.width}))'
     if len(e.args) >= 3:
         hi = vhdl_index(ctx, e.args[1])

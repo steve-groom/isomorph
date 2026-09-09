@@ -208,11 +208,19 @@ def port_lines (m):
     for i, p in enumerate(ports):
         comma = ',' if i < len(ports) - 1 else ''
         out += comment_lines(p.comments, 4)
+        marks = attribute_text(p.attributes)
+        if marks:
+            out.append('    ' + marks)
+        waived = p.attributes.get('unused')
+        if waived:
+            out.append('    /* verilator lint_off UNUSEDSIGNAL */')
         line = '    ' + body[i].rstrip() + comma
         if p.trailing:
             pad = ' ' * max(1, wb + 5 + 1 - len(line))
             line = line + pad + as_comment(p.trailing)
         out.append(line)
+        if waived:
+            out.append('    /* verilator lint_on UNUSEDSIGNAL */')
     return out
 
 
@@ -225,7 +233,11 @@ def used_in (name, body):
     Isomorph specialises a module per parameter set (4.1), so the
     declaration is documentation, not an interface."""
     word = re.compile(r'\b' + re.escape(name) + r'\b')
-    return any(word.search(line) for line in body)
+    for line in body:
+        code = line.split('//')[0]
+        if word.search(code):
+            return True
+    return False
 
 
 def parameter_lines (m, body = None):
@@ -270,6 +282,23 @@ def enum_lines (m):
     return lines
 
 
+def attribute_text (attributes):
+    """(* a, b = "c" *) for the attributes that reach the HDL. `unused`
+    is isomorph's own marker for a pin the designer means to ignore, so
+    it becomes a lint waiver rather than an attribute."""
+    parts = []
+    for key, value in attributes.items():
+        if key == 'unused':
+            continue
+        if value is True:
+            parts.append(key)
+        elif isinstance(value, str):
+            parts.append(f'{key} = "{value}"')
+        else:
+            parts.append(f'{key} = {value}')
+    return '(* ' + ', '.join(parts) + ' *)' if parts else ''
+
+
 def signal_lines (m):
     lines = []
     for s in m.signals:
@@ -278,17 +307,8 @@ def signal_lines (m):
         name = s.name
         if s.array:
             name = f'{name} [{s.array}]'
-        prefix = ''
-        if s.attributes:
-            parts = []
-            for key, value in s.attributes.items():
-                if value is True:
-                    parts.append(key)
-                elif isinstance(value, str):
-                    parts.append(f'{key} = "{value}"')
-                else:
-                    parts.append(f'{key} = {value}')
-            prefix = f'    (* {", ".join(parts)} *)\n'
+        marks = attribute_text(s.attributes)
+        prefix = f'    {marks}\n' if marks else ''
         line = prefix + f'    {packed} {name};'
         lines.append(with_trailing(line, s.trailing))
     if lines:

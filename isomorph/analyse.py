@@ -175,7 +175,8 @@ class Analyser:
             pname = self.name_of(value)
             direction = 'out' if pname in self.driven else 'in'
             out.append(ir.Port(pname, value.width, direction, value.kind,
-                               value.type))
+                               value.type, 0, [], None,
+                               dict(value.attributes)))
         elif isinstance(value, SignalArray):
             pname = self.name_of(value)
             direction = 'out' if any(self.name_of(s) in self.driven
@@ -1220,10 +1221,12 @@ class Analyser:
             used.add(name.split('[')[0])
         for p in mod.ports:
             if p.name.split('[')[0] not in used:
-                self.warnings.append(f'unused port {p.name}')
+                if not p.attributes.get('unused'):
+                    self.warnings.append(f'unused port {p.name}')
         for s in mod.signals:
             if s.name.split('[')[0] not in used:
-                self.warnings.append(f'unused signal {s.name}')
+                if not s.attributes.get('unused'):
+                    self.warnings.append(f'unused signal {s.name}')
 
 
 def root (expr):
