@@ -682,6 +682,15 @@ def match_lines (ctx, node, indent):
         elif pat.op == 'bits':
             bits = pat.value.replace('?', '-')
             label = '"' + bits + '"'
+        elif pat.op == 'const':
+            # a choice must have the subject's type: a std_logic_vector
+            # literal of its width, never a character literal
+            width = node.subject.width
+            value = int(pat.value) & ((1 << width) - 1)
+            if width == 1:
+                label = f"'{value}'"
+            else:
+                label = '"' + format(value, '0%db' % width) + '"'
         else:
             label = vhdl_expr(ctx, pat)
         lines.append(f'{ipad}when {label} =>')

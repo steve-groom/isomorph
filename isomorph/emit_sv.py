@@ -480,6 +480,10 @@ def match_lines (node, indent, nonblocking):
             label = 'default'
         elif pat.op == 'bits':
             label = f"{pat.width}'b{pat.value}"
+        elif pat.op == 'const':
+            # a case item is compared against the subject, so it carries
+            # the subject's width, not the minimum for its value
+            label = f"{node.subject.width}'d{int(pat.value)}"
         else:
             label = sv_expr(pat)
         lines.append(f'{ipad}{label}: begin')
