@@ -268,6 +268,35 @@ def process_fn_lines (m):
         lines += stmt_lines(ctx, p.body, 4)
         lines.append('}')
         lines.append('')
+        if p.kind == 'ff' and p.reset:
+            lines += async_reset_fn_lines(m, p, ctx)
+    return lines
+
+
+def async_reset_fn_lines (m, p, ctx):
+    """The reset branch on its own, writing the live value and the
+    pending one, called from comb_once while the reset is held. A cycle
+    simulator has no asynchronous event; this is the closest it gets."""
+    branch = p.body[0].branches[0][1]
+    saved = ctx.ff_write
+    ctx.ff_write = False
+    lines = [f'static void {m.name}_{p.name}_areset({m.name} *s)', '{']
+    lines += stmt_lines(ctx, branch, 4)
+    ctx.ff_write = saved
+    for name in sorted(assigned_roots(branch)):
+        if '[' in name:
+            continue
+        cid = c_id(name)
+        sig = next((x for x in m.signals if x.name == name), None)
+        port = next((x for x in m.ports if x.name == name), None)
+        arr = (sig.array if sig else (port.array if port else 0))
+        if arr:
+            lines.append(f'    memcpy(s->{cid}_nxt, s->{cid}, '
+                         f'sizeof(s->{cid}));')
+        else:
+            lines.append(f'    s->{cid}_nxt = s->{cid};')
+    lines.append('}')
+    lines.append('')
     return lines
 
 
@@ -318,6 +347,13 @@ def eval_tick_lines (m, by_name):
     for p in m.processes:
         if p.kind == 'comb':
             lines.append(f'    {m.name}_{p.name}(s);')
+    for p in m.processes:
+        if p.kind == 'ff' and p.reset:
+            test = f's->{c_id(p.reset)}' if p.reset_polarity == 'pos' \
+                else f'!s->{c_id(p.reset)}'
+            lines.append(f'    if ({test}) {{')
+            lines.append(f'        {m.name}_{p.name}_areset(s);')
+            lines.append('    }')
     lines.append('}')
     lines.append('')
     lines += live_eq_lines(m, by_name)
@@ -532,10 +568,15 @@ class Ctx:
                 self.int_names.add(n)
         self.loop_vars = set()
         self.widths = {}
+        self.arrays = set()
         for p in module.ports:
             self.widths[p.name] = p.width
+            if p.array:
+                self.arrays.add(p.name)
         for s in module.signals:
             self.widths[s.name] = s.width
+            if s.array:
+                self.arrays.add(s.name)
 
 
 def stmt_lines (ctx, body, indent):
@@ -674,6 +715,9 @@ def c_expr (ctx, e, lhs = False, index = False):
     if op == 'enum':
         return e.value.name
     if op == 'bit':
+        if is_array_element(ctx, e):
+            name = c_expr(ctx, a[0], lhs = lhs)
+            return f'{name}[{c_index(ctx, a[1])}]'
         return c_bit(ctx, e, lhs)
     if op == 'slice':
         return c_slice(ctx, e, lhs)
@@ -839,10 +883,24 @@ def c_binop (ctx, e):
     return f'(({left}) {op} ({right})) & {mask_expr(w)}'
 
 
+def is_array_element (ctx, e):
+    """ir uses op 'bit' for both a bit of a vector and an element of a
+    signal array reached by a variable index. They are the same syntax
+    in SystemVerilog and VHDL, so only C tells them apart: one is a
+    shift and mask, the other is a real array subscript. Elements wider
+    than one bit are already distinguishable by width; a signals(N, 1)
+    array is not, which is what this answers."""
+    if getattr(e, 'op', None) != 'bit' or not e.args:
+        return False
+    base = e.args[0]
+    return (getattr(base, 'op', None) == 'ref'
+            and base.value in getattr(ctx, 'arrays', ()))
+
+
 def c_assign (ctx, s):
     t = s.target
     val = f'({c_expr(ctx, s.value)}) & {mask_expr(t.width)}'
-    if t.op == 'bit' and t.width == 1:
+    if t.op == 'bit' and t.width == 1 and not is_array_element(ctx, t):
         base = t.args[0]
         idx = c_index(ctx, t.args[1])
         dst = c_expr(ctx, base, lhs = True)

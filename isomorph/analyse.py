@@ -55,6 +55,7 @@ class Analyser:
         self.child_directions = child_directions or {}
         self.comments = source_comments(elaborated.func)
         self.consumed = set()           # comment lines already placed
+        self.loop_names = set()         # for-loop indices currently open
 
     def name_of (self, sig):
         """A signal's name inside this block: its port name here if it
@@ -115,9 +116,18 @@ class Analyser:
         processes = [self.process(p) for p in e.processes]
         assigns = [self.cont_assign(a) for a in e.assigns]
         ports = []
+        arg_lines = signature_lines(e.func)
         for name, value in e.ports.items():
-            for leaf in self._port_leaves(name, value):
-                ports.append(leaf)
+            leaves = self._port_leaves(name, value)
+            line = arg_lines.get(name)
+            if leaves and line is not None:
+                # a bundle expands to several ports; the comment written
+                # against the argument belongs to the group, so it goes
+                # on the first of them
+                leaves[0].comments = self.comments_before(
+                    line, arg_lines.get('__previous__' + name, line - 1))
+                leaves[0].trailing = self.trailing(line)
+            ports.extend(leaves)
         signals = []
         for name, s in e.signals.items():
             attrs = dict(s.attributes)
@@ -133,10 +143,20 @@ class Analyser:
                                   dict(a.attributes), len(a), a.line))
         signals.sort(key = lambda s: s.line)
         previous = e.func.__code__.co_firstlineno
+        by_name = {}
+        for name, value in list(e.signals.items()) + list(e.arrays.items()):
+            by_name[name] = value
         for s in signals:
             s.comments = self.comments_before(s.line, previous)
             s.trailing = self.trailing(s.line)
             previous = s.line
+            source = by_name.get(s.name)
+            for line in getattr(source, 'attr_lines', ()) or ():
+                s.comments += self.comments_before(line, line - 1)
+                extra = self.trailing(line)
+                if extra:
+                    s.comments.append(extra)
+                previous = max(previous, line)
         for p in processes:
             p.comments = self.comments_before(p.line, p.line - 4)
         instances = [self.instance(i) for i in e.instances.values()]
@@ -281,10 +301,47 @@ class Analyser:
         if proc.kind == 'comb':
             self.check_complete(body, proc.name, proc)
             self.check_rbw(body, set(self.assigned_here), proc)
+        reset = None
+        if getattr(proc, 'reset', None) is not None:
+            reset = self.name_of(proc.reset)
+            self.read.add(reset)
+            self.check_async_reset(body, reset, proc)
+            self.warnings.append(
+                'severe: ' + proc.name + ': asynchronous reset on '
+                + reset + ' (' + (proc.reason or '') + ')')
         return ir.Process(proc.name, proc.kind,
                           self.name_of(proc.clock) if proc.clock else None,
                           proc.polarity, body, dict(proc.attributes),
-                          proc.line)
+                          proc.line, [], reset,
+                          getattr(proc, 'reset_polarity', 'pos'),
+                          getattr(proc, 'reason', None))
+
+    def check_async_reset (self, body, reset, proc):
+        """The body of an asynchronous-reset flop is exactly one if/else
+        on the reset. Both languages emit that shape, VHDL as
+        `if reset then ... elsif rising_edge(clock) then ...`, so there
+        is nowhere to put anything else."""
+        shape = (f'{proc.name}: the body of always_ff_async_reset is one '
+                 f'if ({reset}): ... else: ... and nothing else')
+        if len(body) != 1 or not isinstance(body[0], ir.If):
+            raise ConversionError(shape, self.file, proc.line)
+        node = body[0]
+        if len(node.branches) != 2 or node.branches[-1][0] is not None:
+            raise ConversionError(shape + '; no elif', self.file, proc.line)
+        cond = node.branches[0][0]
+        names = set()
+        stack = [cond]
+        while stack:
+            e = stack.pop()
+            if e is None:
+                continue
+            if getattr(e, 'op', None) == 'ref':
+                names.add(e.value)
+            stack.extend(getattr(e, 'args', []) or [])
+        if reset not in names:
+            raise ConversionError(
+                f'{proc.name}: the first condition must test {reset}, the '
+                'asynchronous reset', self.file, proc.line)
 
     def else_line (self, node):
         """Line of the `else:` keyword. Comments under it belong to the
@@ -408,7 +465,9 @@ class Analyser:
         if not isinstance(node.target, ast.Name):
             self.error(node, 'loop index must be a name')
         scope.locals[node.target.id] = ('index', start, stop)
+        self.loop_names.add(node.target.id)
         body = self.block_body(node.body, scope, node.lineno)
+        self.loop_names.discard(node.target.id)
         del scope.locals[node.target.id]
         return ir.For(node.target.id, start, stop, body,
                       self.line_base + node.lineno)
@@ -774,19 +833,40 @@ class Analyser:
             b.width = a.width
         return a, b
 
+    def is_elaboration (self, e):
+        """True if this expression is settled before the netlist exists:
+        a literal, a parameter, a constant, an open loop index, or an
+        expression built only from those."""
+        op = getattr(e, 'op', None)
+        if op == 'const':
+            return True
+        if op == 'ref':
+            name = e.value
+            return (name in self.e.constants or name in self.e.parameters
+                    or name in self.loop_names)
+        if op in ('binop', 'unop'):
+            return all(self.is_elaboration(a) for a in (e.args or []))
+        return False
+
     def binop (self, node, scope):
         op = {ast.BitAnd: '&', ast.BitOr: '|', ast.BitXor: '^', ast.Add: '+',
               ast.Sub: '-', ast.LShift: '<<', ast.RShift: '>>',
               ast.Mult: '*'}.get(type(node.op))
         if op is None:
             self.error(node, 'operator not supported in hardware')
-        if self.kind == 'ff' and op in ('+', '-', '*', '<<', '>>'):
-            self.error(node, f'{op} in a clocked process: arithmetic belongs '
-                       'in a comb process that this one selects from')
         left = self.expression(node.left, scope)
         right = self.expression(node.right, scope)
+        if self.kind == 'ff' and op in ('+', '-', '*', '<<', '>>'):
+            # index arithmetic on parameters, constants and unrolled loop
+            # variables is settled before the netlist exists: regs[i-1]
+            # in a shift register is wiring, not an adder.
+            if not (self.is_elaboration(left) and self.is_elaboration(right)):
+                self.error(node, f'{op} in a clocked process: arithmetic '
+                           'belongs in a comb process that this one selects '
+                           'from')
         if op in ('<<', '>>'):
-            if right.op != 'const' and self.kind == 'ff':
+            if right.op != 'const' and self.kind == 'ff' \
+                    and not self.is_elaboration(right):
                 self.error(node, f'{op} in a clocked process: a barrel '
                            'shifter belongs in a comb process')
             return ir.Expr('binop', left.width, left.signed, [left, right], op)
@@ -1228,6 +1308,32 @@ def match_covers_all (s):
 
 def kind_signed (signal):
     return False
+
+
+def signature_lines (func):
+    """argument name -> the source line it is written on, absolute.
+
+    Ports carry their role comment in the block signature, which no
+    other pass looks at."""
+    out = {}
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError):
+        return out
+    node = next((n for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))),
+                None)
+    if node is None:
+        return out
+    base = func.__code__.co_firstlineno - 1
+    args = list(node.args.args) + list(node.args.kwonlyargs)
+    previous = base + node.lineno
+    for a in args:
+        out[a.arg] = base + a.lineno
+        out['__previous__' + a.arg] = previous
+        previous = base + a.lineno
+    return out
 
 
 def source_comments (func):

@@ -4,7 +4,7 @@ import sys
 
 from .signal import (signal, signals, vector, enum, struct, interface,
     interfaces, attr, open_port, concat, replicate, bits, always_comb,
-    always_ff, assign, instances, IsomorphError)
+    always_ff, always_ff_async_reset, assign, instances, IsomorphError)
 from .elaborate import block, Elaborated
 from .analyse import analyse, ConversionError
 from .dump import dump
@@ -17,7 +17,8 @@ from .sim import Simulator
 
 __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
            'interface', 'interfaces', 'attr', 'open_port', 'concat',
-           'replicate', 'bits', 'always_comb', 'always_ff', 'assign',
+           'replicate', 'bits', 'always_comb', 'always_ff',
+           'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
            'IsomorphError', 'ConversionError', 'SimError', 'Simulator',
            'main']
@@ -53,7 +54,7 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None):
     elif warnings:
         for w in warnings:
             if 'severe:' in w:
-                text = w.replace('severe:', '', 1).strip()
+                text = ' '.join(w.replace('severe:', '', 1).split())
                 print('severe:', text, file = sys.stderr)
             else:
                 print('warning:', w, file = sys.stderr)

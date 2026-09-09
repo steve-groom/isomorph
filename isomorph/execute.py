@@ -200,6 +200,27 @@ class Executor:
         for p in m.processes:
             if p.kind == 'comb':
                 run_stmts(ctx, p.body)
+        self._async_resets(store)
+
+    def _async_resets (self, store):
+        """An asynchronous reset acts while it is held, not only at the
+        clock edge. This is a cycle simulator, so the closest honest
+        model is to apply the reset branch on every settle pass while
+        the reset is asserted, to the live value and to the pending one
+        so a later commit cannot undo it."""
+        for p in store.m.processes:
+            if p.kind != 'ff' or not p.reset:
+                continue
+            value = store.v.get(p.reset)
+            if value is None:
+                continue
+            asserted = bool(value) if p.reset_polarity == 'pos' \
+                else not bool(value)
+            if not asserted:
+                continue
+            branch = p.body[0].branches[0][1]
+            run_stmts(Ctx(store, False), branch)
+            run_stmts(Ctx(store, True), branch)
 
     def _posedge_store (self, store, clock):
         ctx = Ctx(store, True)

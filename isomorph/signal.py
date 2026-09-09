@@ -205,6 +205,16 @@ def open_port (width = 1):
 
 def attr (target, **attributes):
     target.attributes.update(attributes)
+    # Remember where it was written so a comment on the attr() line
+    # reaches the signal it attributes, rather than being dropped.
+    lines = getattr(target, 'attr_lines', None)
+    if lines is None:
+        try:
+            target.attr_lines = [_caller_line()]
+        except AttributeError:
+            pass
+    else:
+        lines.append(_caller_line())
     return target
 
 
@@ -237,6 +247,9 @@ class Process:
         self.func = func
         self.clock = clock
         self.polarity = polarity
+        self.reset = None               # asynchronous reset signal, or None
+        self.reset_polarity = 'pos'
+        self.reason = None              # why this flop needs one
         self.name = func.__name__
         self.attributes = {}
         self.line = func.__code__.co_firstlineno
@@ -249,12 +262,54 @@ def always_comb (func):
 def always_ff (*edges):
     if len(edges) != 1 or not isinstance(edges[0], Edge):
         raise IsomorphError(
-            'always_ff takes one clock edge; asynchronous '
-            'set/reset is not allowed')
+            'always_ff takes one clock edge. A flop with an asynchronous '
+            'reset is always_ff_async_reset(clock, reset, reason = ...), '
+            'which is for reset synchronisers and dual-clock FIFO '
+            'pointers, not for general logic.')
     edge = edges[0]
 
     def decorate (func):
         return Process('ff', func, edge.signal, edge.polarity)
+    return decorate
+
+
+def always_ff_async_reset (*edges, reason = None):
+    """A flop with an asynchronous reset. Deliberately long to type.
+
+    General logic uses a synchronous reset: it needs no extra routing,
+    it does not create a recovery/removal timing check, and it cannot
+    glitch a register out of a state the rest of the design believes
+    it is in. This construct exists for the two cases that cannot:
+    a reset synchroniser, which has no running clock to sample the
+    release on, and a pointer or flag crossing in a dual-clock FIFO.
+
+    Every use is a severe warning at conversion, naming the process,
+    the reset and the reason, and the reason is emitted as a comment
+    above the process in both languages.
+    """
+    if len(edges) != 2 or not all(isinstance(e, Edge) for e in edges):
+        raise IsomorphError(
+            'always_ff_async_reset takes two edges: the clock first, then '
+            'the asynchronous reset, e.g. always_ff_async_reset('
+            'i_clock.posedge, i_areset.posedge, reason = "...")')
+    clock, reset = edges
+    if clock.signal is reset.signal:
+        raise IsomorphError(
+            'always_ff_async_reset: the clock and the asynchronous reset '
+            'are the same signal')
+    if not isinstance(reason, str) or not reason.strip():
+        raise IsomorphError(
+            'always_ff_async_reset needs reason = "..." saying why this '
+            'flop cannot take a synchronous reset. It is emitted as a '
+            'comment in the HDL and printed at conversion, so write it '
+            'for the next reader.')
+
+    def decorate (func):
+        p = Process('ff', func, clock.signal, clock.polarity)
+        p.reset = reset.signal
+        p.reset_polarity = reset.polarity
+        p.reason = reason.strip()
+        return p
     return decorate
 
 

@@ -110,6 +110,8 @@ class Port:
     kind: str = 'vector'
     type: object = None
     array: int = 0
+    comments: list = field(default_factory = list)
+    trailing: str = None
 
 
 @dataclass
@@ -132,6 +134,9 @@ class Process:
     attributes: dict = field(default_factory = dict)
     line: int = 0
     comments: list = field(default_factory = list)
+    reset: str = None          # asynchronous reset signal (5.14)
+    reset_polarity: str = 'pos'
+    reason: str = None         # why this flop has one
 
 
 @dataclass

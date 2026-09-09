@@ -10,6 +10,7 @@ Style (IEEE numeric_std, Xilinx UG901, CNRS C_6, so-logic 2.2):
   architecture rtl; process (all) / rising_edge; no std_logic_arith;
   no buffer ports; end entity / end architecture labelled.
 """
+import textwrap
 import os
 import shutil
 import tempfile
@@ -194,6 +195,16 @@ def header_lines (m):
     return lines
 
 
+def reason_lines (reason, indent, marker):
+    """The async-reset reason, wrapped to the 79-column house limit."""
+    if not reason:
+        return []
+    pad = ' ' * indent
+    width = 79 - indent - len(marker) - 1
+    body = textwrap.wrap('asynchronous reset: ' + reason, width)
+    return [f'{pad}{marker} {line}' for line in body]
+
+
 def as_comment (text):
     if text.startswith('#'):
         return '--' + text[1:]
@@ -247,10 +258,18 @@ def port_lines (m):
     wn = max(len(n) for n in names)
     wd = max(len(d) for d in dirs)
     out = []
+    body = [f'{names[i]:<{wn}} : {dirs[i]:<{wd}} {types[i]}'
+            for i in range(len(ports))]
+    wb = max((len(b.rstrip()) for i, b in enumerate(body)
+              if ports[i].trailing), default = 0)
     for i, p in enumerate(ports):
         semi = ';' if i < len(ports) - 1 else ''
-        out.append(
-            f'    {names[i]:<{wn}} : {dirs[i]:<{wd}} {types[i]}{semi}')
+        out += comment_lines(p.comments, 4)
+        line = '    ' + body[i].rstrip() + semi
+        if p.trailing:
+            pad = ' ' * max(1, wb + 4 + 1 + 1 - len(line))
+            line = line + pad + as_comment(p.trailing)
+        out.append(line)
     return out
 
 
@@ -479,14 +498,26 @@ def root_name (expr):
 def process_lines (ctx, p):
     lines = comment_lines(p.comments, 2)
     if p.kind == 'ff':
-        lines.append(f'  {p.name} : process ({p.clock}) is')
-        lines.append('  begin')
         edge = 'rising_edge' if p.polarity == 'pos' else 'falling_edge'
-        lines.append(f'    if {edge}({p.clock}) then')
         saved = ctx.var_map
         ctx.var_map = {}
         ctx.in_function = False
-        lines += stmt_lines(ctx, p.body, 6)
+        if p.reset:
+            # if reset then ... elsif rising_edge(clock) then ...
+            lines += reason_lines(p.reason, 2, '--')
+            lines.append(f'  {p.name} : process ({p.clock}, {p.reset}) is')
+            lines.append('  begin')
+            level = "'1'" if p.reset_polarity == 'pos' else "'0'"
+            node = p.body[0]
+            lines.append(f'    if {p.reset} = {level} then')
+            lines += stmt_lines(ctx, node.branches[0][1], 6)
+            lines.append(f'    elsif {edge}({p.clock}) then')
+            lines += stmt_lines(ctx, node.branches[1][1], 6)
+        else:
+            lines.append(f'  {p.name} : process ({p.clock}) is')
+            lines.append('  begin')
+            lines.append(f'    if {edge}({p.clock}) then')
+            lines += stmt_lines(ctx, p.body, 6)
         ctx.var_map = saved
         lines.append('    end if;')
         lines.append(f'  end process {p.name};')
@@ -869,6 +900,10 @@ def vhdl_slice (ctx, e):
         lo = vhdl_index(ctx, e.args[2])
     else:
         hi, lo = str(e.value[0] - 1), str(e.value[1])
+    if e.width == 1:
+        # A one-bit value is std_logic in this type model, and VHDL will
+        # not match x(n downto n), a one-element vector, against it.
+        return f'{vhdl_expr(ctx, base)}({lo})'
     return f'{vhdl_expr(ctx, base)}({hi} downto {lo})'
 
 

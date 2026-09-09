@@ -3,6 +3,8 @@
 The output keeps the input's structure: one module per IR module (leaves
 first), named processes, named functions, named instances, comments on
 the same items. Section 4 of SPEC.txt is the reference."""
+import re
+import textwrap
 import os
 import subprocess
 
@@ -64,12 +66,11 @@ def emit_module (m):
     lines.append(');')
     lines.append('')
     body = []
-    body += parameter_lines(m)
-    body += localparam_lines(m)
-    body += enum_lines(m)
-    body += signal_lines(m)
-    body += function_lines(m)
-    body += item_lines(m)
+    rest = (enum_lines(m) + signal_lines(m) + function_lines(m)
+            + item_lines(m))
+    body += parameter_lines(m, rest)
+    body += localparam_lines(m, rest)
+    body += rest
     # indent body, keep blank lines
     for line in body:
         if line == '':
@@ -95,6 +96,16 @@ def header_lines (m):
         lines.append('// ' + line if line.strip() else '//')
     lines.append('')
     return lines
+
+
+def reason_lines (reason, indent, marker):
+    """The async-reset reason, wrapped to the 79-column house limit."""
+    if not reason:
+        return []
+    pad = ' ' * indent
+    width = 79 - indent - len(marker) - 1
+    body = textwrap.wrap('asynchronous reset: ' + reason, width)
+    return [f'{pad}{marker} {line}' for line in body]
 
 
 def as_comment (text):
@@ -174,32 +185,54 @@ def port_lines (m):
     wd = max(len(d) for d in dirs)
     wt = max(len(t) for t in types)
     out = []
+    body = [f'{dirs[i]:<{wd}} {types[i]:<{wt}} {names[i]}'
+            for i in range(len(ports))]
+    wb = max((len(b.rstrip()) for i, b in enumerate(body)
+              if ports[i].trailing), default = 0)
     for i, p in enumerate(ports):
         comma = ',' if i < len(ports) - 1 else ''
-        out.append(f'    {dirs[i]:<{wd}} {types[i]:<{wt}} {names[i]}{comma}')
+        out += comment_lines(p.comments, 4)
+        line = '    ' + body[i].rstrip() + comma
+        if p.trailing:
+            pad = ' ' * max(1, wb + 5 + 1 - len(line))
+            line = line + pad + as_comment(p.trailing)
+        out.append(line)
     return out
 
 
-def parameter_lines (m):
+def used_in (name, body):
+    """Does this identifier appear in the rendered module body?
+
+    A parameter that only set an array size or a loop bound is folded
+    to a literal by then. Declaring it anyway leaves a parameter that
+    looks overridable but changes nothing, and every linter says so.
+    Isomorph specialises a module per parameter set (4.1), so the
+    declaration is documentation, not an interface."""
+    word = re.compile(r'\b' + re.escape(name) + r'\b')
+    return any(word.search(line) for line in body)
+
+
+def parameter_lines (m, body = None):
     lines = []
     for name, value in m.parameters.items():
         if isinstance(value, bool):
             continue
         if isinstance(value, int):
+            if body is not None and not used_in(name, body):
+                continue
             lines.append(f'    parameter {name} = {value};')
     if lines:
         lines.append('')
     return lines
 
 
-def localparam_lines (m):
+def localparam_lines (m, body = None):
     lines = []
     for name, value in m.constants.items():
-        if isinstance(value, bool):
-            lines.append(f'    localparam {name} = {int(value)};')
-        else:
-            # Unsized so WIDTH-1 in an index is integer arithmetic.
-            lines.append(f'    localparam {name} = {int(value)};')
+        if body is not None and not used_in(name, body):
+            continue
+        # Unsized so WIDTH-1 in an index is integer arithmetic.
+        lines.append(f'    localparam {name} = {int(value)};')
     if lines:
         lines.append('')
     return lines
@@ -321,7 +354,13 @@ def process_lines (p):
         lines.append(f'    (* {", ".join(parts)} *)')
     if p.kind == 'ff':
         edge = 'posedge' if p.polarity == 'pos' else 'negedge'
-        head = f'    always_ff @({edge} {p.clock}) begin : {p.name}'
+        if p.reset:
+            redge = 'posedge' if p.reset_polarity == 'pos' else 'negedge'
+            lines += reason_lines(p.reason, 4, '//')
+            head = (f'    always_ff @({edge} {p.clock} or {redge} '
+                    f'{p.reset}) begin : {p.name}')
+        else:
+            head = f'    always_ff @({edge} {p.clock}) begin : {p.name}'
         nb = True
     else:
         head = f'    always_comb begin : {p.name}'
