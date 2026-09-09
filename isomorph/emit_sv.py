@@ -83,16 +83,16 @@ def emit_module (m):
 
 
 def header_lines (m):
-    """Block docstring as a /* */ comment. '#' comments travel as //."""
+    """Block docstring as // lines, the shape the VHDL header already
+    has. Every comment isomorph emits is then one form: // here, --
+    there. lowRISC's Verilog style guide prefers // over /* */, and it
+    is what the overwhelming majority of SystemVerilog in the wild
+    uses."""
     if not m.header:
         return []
-    body = m.header.strip('\n').splitlines()
-    if len(body) == 1:
-        return [f'/* {body[0].strip()} */', '']
-    lines = ['/*']
-    for line in body:
-        lines.append(' * ' + line if line.strip() else ' *')
-    lines.append(' */')
+    lines = []
+    for line in m.header.strip('\n').splitlines():
+        lines.append('// ' + line if line.strip() else '//')
     lines.append('')
     return lines
 
