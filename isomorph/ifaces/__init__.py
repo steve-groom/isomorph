@@ -1,4 +1,4 @@
-from .avalon import avalon_mm
+from .avalon import avalon_mm, avalon_st
 from .wishbone import wishbone
 from .axi import axi4_lite
 from .stream import stream
@@ -10,7 +10,7 @@ from .config import config
 from .cpu import cpu_control
 from .memory import device_sdram, hyperram
 
-__all__ = ['avalon_mm', 'wishbone', 'axi4_lite', 'stream',
+__all__ = ['avalon_mm', 'avalon_st', 'wishbone', 'axi4_lite', 'stream',
            'spi', 'spim', 'spis', 'spis_tri', 'part_spi', 'part_spi',
            'adc121s021', 'bga7204',
            'gpio', 'irq', 'uart', 'config', 'cpu_control',
