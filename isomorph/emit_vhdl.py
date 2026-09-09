@@ -11,6 +11,8 @@ Style (IEEE numeric_std, Xilinx UG901, CNRS C_6, so-logic 2.2):
   no buffer ports; end entity / end architecture labelled.
 """
 import os
+import shutil
+import tempfile
 import subprocess
 
 from . import ir
@@ -52,12 +54,14 @@ def write_vhdl (modules, path):
 
 def lint_vhdl (path):
     """ghdl -a --std=08. Raises ConversionError on failure."""
-    workdir = os.path.dirname(os.path.abspath(path)) or '.'
+    workdir = tempfile.mkdtemp(prefix = 'iso_ghdl_')
     cmd = ['ghdl', '-a', '--std=08', '--workdir=' + workdir, path]
     try:
         result = subprocess.run(cmd, capture_output = True, text = True)
     except FileNotFoundError:
         raise ConversionError('ghdl not found on PATH')
+    finally:
+        shutil.rmtree(workdir, ignore_errors = True)
     if result.returncode != 0:
         message = (result.stderr or result.stdout or 'ghdl failed').rstrip()
         raise ConversionError(f'ghdl -a failed for {path}:\n{message}')

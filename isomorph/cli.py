@@ -3,14 +3,22 @@ import runpy
 import sys
 
 USAGE = (
-    'usage: python -m isomorph dump design.py\n'
-    '       python -m isomorph design.py [--sv] [--vhdl] [--c99] '
-    '[--lint] [-o dir]\n'
+    'usage: python -m isomorph design.py [--run [BACKEND]] [--sv] '
+    '[--vhdl] [--c99]\n'
+    '                                   [--lint] [--vcd FILE] [-o dir]\n'
+    '       python -m isomorph dump design.py\n'
+    '       python -m isomorph doctor\n'
     '       python -m isomorph sim-report log.ndjson '
     '[sidecar.json] [events.json]\n'
-    '  default: write build/<top>.sv\n'
+    '\n'
+    '  A design file that ends with main(elaborate, test) accepts these\n'
+    '  directly; run it with --help for its own option list.\n'
+    '\n'
+    '  --run    run the design test bench: python, c99 or verilator\n'
     '  --c99    cycle-accurate C99 smoke (.c, .h, _vcd.c)\n'
-    '  -o dir   output directory (default build/)'
+    '  --lint   check written HDL with verilator and ghdl\n'
+    '  -o dir   output directory (default build/)\n'
+    '  doctor   report which external tools this machine has'
 )
 
 
@@ -21,6 +29,9 @@ def main (argv = None):
         stream = sys.stdout if args and args[0] in ('-h', '--help') else sys.stderr
         print(USAGE, file = stream)
         return 0 if args and args[0] in ('-h', '--help') else 2
+    if args[0] == 'doctor':
+        from .deps import main as doctor
+        return doctor(args[1:])
     if args[0] == 'dump':
         if len(args) < 2:
             print(USAGE, file = sys.stderr)

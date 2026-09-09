@@ -101,6 +101,12 @@ Developers who want the share tree to track the files on disk
 
     ./install.sh --editable
 
+install.sh finishes by reporting which external tools this
+machine has (section 10). To install the missing ones at the
+same time, which needs root:
+
+    ./install.sh --deps
+
 
 5. CHECK
 --------
@@ -126,11 +132,13 @@ Convert:
 
 6. WRITE A DESIGN
 -----------------
-A file design.py in any directory:
+A design file design.py in any directory. Three parts: the block,
+an elaborate function that builds its ports, and a test bench that
+drives a simulator.
 
     from isomorph import (block, signal, signals, enum, always_ff,
         always_comb, assign, concat, replicate, bits, struct,
-        interface, interfaces, attr, open_port, instances)
+        interface, interfaces, attr, open_port, instances, main)
 
     @block
     def add2 (i_a, i_b, o_sum, WIDTH = 4):
@@ -139,15 +147,47 @@ A file design.py in any directory:
             o_sum.next = (i_a + i_b)[WIDTH-1:0]
         return instances()
 
+    def elaborate_add2 ():
+        return add2(i_a = signal(4), i_b = signal(4),
+                    o_sum = signal(4))
+
+    def test_add2 (sim):
+        for a in range(16):
+            for b in range(16):
+                sim.set('i_a', a)
+                sim.set('i_b', b)
+                sim.eval()
+                assert sim.get('o_sum') == (a + b) % 16
+
     if (__name__ == '__main__'):
-        from isomorph import convert
-        convert(add2(i_a = signal(4), i_b = signal(4),
-                     o_sum = signal(4)))
+        import sys
+        sys.exit(main(elaborate_add2, test_add2))
 
-    python3 design.py
+elaborate_add2 is the only place the ports are built, so the test
+bench and the conversion can never drift apart. main() gives the
+file a command line:
 
-writes build/add2.sv and prints the path.
+    python3 design.py                 run the test bench (Python)
+    python3 design.py --run c99       run it through gcc
+    python3 design.py --run verilator run it under Verilator
+    python3 design.py --sv --vhdl     write the HDL
+    python3 design.py --sv --lint     write it and check it
+    python3 design.py --vcd wave.vcd  run and record a waveform
+    python3 design.py --help          the full list
 
+Three simulators, one test bench:
+
+  python     interprets the IR. Slowest. print() and pdb work, so
+             this is the one to debug in.
+  c99        the emitted C99 through gcc, driven by ctypes. Fast.
+             Signals wider than 64 bits are not supported.
+  verilator  the emitted SystemVerilog under Verilator. This is the
+             reference: if it disagrees with the other two, they are
+             wrong. Reaches top-level ports only.
+
+A design with no test bench still gets the writing half:
+
+    main(elaborate_add2)
 
 7. UPDATE
 ---------
@@ -184,3 +224,30 @@ uninstall as well.
   - pip too old:  python3 -m pip install --upgrade pip
     then ./install.sh again.
   - Permission error on site-packages:  ./install.sh --user
+
+
+10. EXTERNAL TOOLS
+------------------
+Isomorph converts to SystemVerilog and VHDL, and runs the Python
+simulator, on a machine with nothing but Python installed. The rest
+is optional and each piece switches on one feature:
+
+    gcc        the c99 simulator backend, and compiling emitted C99
+    g++        the verilator simulator backend
+    make       building the Verilator model
+    verilator  --lint of SystemVerilog, the verilator backend
+    ghdl       --lint of VHDL
+
+Ask what this machine has:
+
+    python3 -m isomorph doctor
+
+It prints one line per tool and, if any are missing, the exact
+command to install them for the platform it detects (apt-get, dnf,
+pacman or brew). It does not run that command. Installing compilers
+needs root and is the machine owner's decision, so it is opt in:
+
+    ./install.sh --deps
+
+Nothing external is required, so doctor exits 0 with tools missing.
+It exits 1 only if Python itself is too old, which is 3.11.

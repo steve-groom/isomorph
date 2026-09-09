@@ -8,13 +8,16 @@ HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 usage () {
     cat <<'EOF'
-usage: install.sh [--pack] [--user] [--editable] [--dest DIR]
+usage: install.sh [--pack] [--user] [--editable] [--deps] [--dest DIR]
 
   default     copy a clean tree to ~/isomorph and pip-install it
   --pack      copy to ~/isomorph only (for tarball / scp)
   --user      force pip --user (~/.local) even if a venv/conda
               env is writable
   --editable  pip install -e (developers; points at the tree)
+  --deps      install the external tools too (gcc, verilator,
+              ghdl). Needs root. Without it they are only
+              reported.
   --dest DIR  install prefix instead of ~/isomorph
 
 After install, the house import works:
@@ -28,6 +31,7 @@ EOF
 PACK_ONLY=0
 FORCE_USER=0
 EDITABLE=0
+WITH_DEPS=0
 DEST=$HOME_DEST
 
 while [ $# -gt 0 ]; do
@@ -36,6 +40,7 @@ while [ $# -gt 0 ]; do
         --pack) PACK_ONLY=1 ;;
         --user) FORCE_USER=1 ;;
         --editable) EDITABLE=1 ;;
+        --deps) WITH_DEPS=1 ;;
         --dest) DEST=$2; shift ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -112,6 +117,29 @@ print('isomorph ok')
 print(' ', isomorph.__file__)
 PY
 
+# ------------------------------------------------------------------
+# External tools. Isomorph converts to SystemVerilog and VHDL and
+# simulates in Python with none of them installed. gcc, verilator
+# and ghdl switch on the other two simulator backends and --lint.
+echo
+"$PYTHON" -m isomorph doctor || true
+
+if [ "$WITH_DEPS" -eq 1 ]; then
+    COMMAND=$("$PYTHON" -c \
+        'import isomorph.deps as d; print(d.install_command() or "")')
+    if [ -z "$COMMAND" ]; then
+        echo "nothing missing, or this platform is not one install.sh"
+        echo "knows how to advise on; install the tools by hand."
+    else
+        echo "running: $COMMAND"
+        sh -c "$COMMAND"
+        echo
+        "$PYTHON" -m isomorph doctor || true
+    fi
+fi
+
 echo
 echo "done. New Python sessions can use the house import."
-echo "convert:  python3 -m isomorph design.py"
+echo "run a design:   python3 design.py --run verilator"
+echo "convert:        python3 design.py --sv --vhdl --lint"
+echo "check tools:    python3 -m isomorph doctor"

@@ -20,7 +20,8 @@ RUNTIME_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 class Simulator:
     """set / get / eval / tick / posedge, VCD and ndjson.
 
-    backend: 'python' (IR interpreter) or 'c99' (gcc -std=c99 -shared).
+    backend: 'python' (IR interpreter), 'c99' (gcc -shared) or
+    'verilator' (the emitted .sv under Verilator, the reference).
     add_clock(period) stores VCD display time only. Not STA.
     """
 
@@ -45,14 +46,20 @@ class Simulator:
         self.log_last = {}
         self._python = None
         self._c99 = None
+        self._native = None
         self._checks = []
         self._proto_events = []
         if backend == 'python':
             self._python = Executor(self.modules)
         elif backend == 'c99':
             self._c99 = C99Backend(self.modules, workdir)
+            self._native = self._c99
+        elif backend == 'verilator':
+            from .verilator import VerilatorBackend
+            self._native = VerilatorBackend(self.modules, workdir)
         else:
-            raise SimError(f'unknown simulator backend {backend!r}')
+            raise SimError(f"unknown simulator backend {backend!r}; "
+                           "use 'python', 'c99' or 'verilator'")
 
     def add_clock (self, period, clock = None):
         ns = max(1, int(round(float(period) / 1e-9)))
@@ -74,13 +81,13 @@ class Simulator:
         if self._python is not None:
             self._python.set(name, value)
         else:
-            self._c99.set(name, value)
+            self._native.set(name, value)
 
     def get (self, key):
         name = self._name(key)
         if self._python is not None:
             return self._python.get(name)
-        return self._c99.get(name)
+        return self._native.get(name)
 
     def add_check (self, check):
         """Protocol monitor. Sampled after comb settle, before the edge."""
@@ -107,7 +114,7 @@ class Simulator:
         if self._python is not None:
             self._python.eval()
         else:
-            self._c99.eval()
+            self._native.eval()
         self._dump()
         self._run_checks('comb')
 
@@ -117,7 +124,7 @@ class Simulator:
         if self._python is not None:
             self._python.posedge(clk)
         else:
-            self._c99.clock(clk)
+            self._native.clock(clk)
         self.cycle += 1
         self.time += self._period(clk or self.clock_name)
         self._dump()
@@ -131,9 +138,9 @@ class Simulator:
                 self._run_checks('edge')
                 self._python.posedge(clk)
             else:
-                self._c99.eval()
+                self._native.eval()
                 self._run_checks('edge')
-                self._c99.clock(clk)
+                self._native.clock(clk)
             self.cycle += 1
             self.time += self._period(clk or self.clock_name)
             self._dump()
@@ -180,10 +187,10 @@ class Simulator:
                     self._python.posedge(c, commit = False)
                 self._python.commit()
         else:
-            self._c99.eval()
+            self._native.eval()
             self._run_checks('edge')
             for c in group:
-                self._c99.clock(c)
+                self._native.clock(c)
         self.cycle += 1
         self.time = t
         self._dump()
@@ -301,7 +308,11 @@ class Simulator:
     def _live (self):
         if self._python is not None:
             return self._python.store.walk_live()
-        return walk_c99(self.top, self.by_name, self._c99.state, '')
+        if self._c99 is not None:
+            return walk_c99(self.top, self.by_name, self._c99.state, '')
+        # verilator: top-level ports only
+        return [(name, width, self._native.get(name))
+                for name, _, width, _ in self._native.slots]
 
 
 def _wanted (hier, traces):

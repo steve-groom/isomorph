@@ -19,7 +19,8 @@ __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
            'interface', 'interfaces', 'attr', 'open_port', 'concat',
            'replicate', 'bits', 'always_comb', 'always_ff', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
-           'IsomorphError', 'ConversionError', 'SimError', 'Simulator']
+           'IsomorphError', 'ConversionError', 'SimError', 'Simulator',
+           'main']
 
 
 def _argv_has (flag):
@@ -128,3 +129,6 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None):
     for path in wrote:
         print('wrote', os.path.abspath(path))
     return modules
+
+
+from .entry import main            # noqa: E402  (needs convert)

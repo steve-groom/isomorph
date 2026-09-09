@@ -5,6 +5,7 @@ masked to width. tick() settles comb, runs clocked processes into
 *_nxt, commits, settles comb again. Not the design of record.
 """
 import os
+import shutil
 
 from . import ir
 from .analyse import ConversionError
@@ -57,7 +58,27 @@ def write_c99 (modules, c_path):
         f.write(source)
     with open(vcd_path, 'w', encoding = 'ascii', newline = '\n') as f:
         f.write(emit_c99_vcd(modules))
+    copy_runtime(directory)
     return c_path, h_path
+
+
+RUNTIME_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           'runtime')
+
+
+def copy_runtime (directory):
+    """iso_vcd.[ch] and iso_log.[ch] next to the emitted sources, so the
+    output directory compiles on a machine with no isomorph installed."""
+    copied = []
+    if not os.path.isdir(RUNTIME_DIR):
+        return copied
+    for name in sorted(os.listdir(RUNTIME_DIR)):
+        if not name.endswith(('.c', '.h')):
+            continue
+        target = os.path.join(directory, name)
+        shutil.copyfile(os.path.join(RUNTIME_DIR, name), target)
+        copied.append(target)
+    return copied
 
 
 def emit_header (modules, top):
