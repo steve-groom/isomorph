@@ -1,0 +1,186 @@
+ISOMORPH - COPY AND SETUP
+=========================
+Plain text, 79 columns.
+
+After setup, Python finds isomorph the same way it finds MyHDL: pip
+puts the package in site-packages. No PYTHONPATH, no sys.path
+edits, no .bashrc hacks. A design file starts with the house
+import and nothing else:
+
+    from isomorph import (block, signal, signals, enum, always_ff,
+        always_comb, assign, concat, replicate, bits, struct,
+        interface, interfaces, attr, open_port, instances)
+
+Python 3.11 or newer. pip. That is all.
+
+
+1. TWO TREES
+------------
+  Development tree (git, tests, Quartus work):
+
+    /home/<you>/.../isomorph          this repository
+
+  Share tree (clean copy, what colleagues get):
+
+    ~/isomorph
+
+  Do not put RTL designs inside ~/isomorph. That folder is the
+  package you copy. Keep designs in their own project directories.
+
+
+2. MAKE THE SHARE COPY
+----------------------
+From the development tree:
+
+    ./install.sh --pack
+
+That writes a clean tree to ~/isomorph:
+
+    ~/isomorph/install.sh
+    ~/isomorph/INSTALL.txt
+    ~/isomorph/pyproject.toml
+    ~/isomorph/SPEC.txt
+    ~/isomorph/isomorph/          the Python package
+
+Caches, egg-info and __pycache__ are omitted. Re-run --pack
+whenever the development tree should be re-copied.
+
+Other destinations:
+
+    ./install.sh --pack --dest /tmp/isomorph
+
+
+3. GIVE IT TO A COLLEAGUE
+-------------------------
+Tarball (from your home directory):
+
+    tar czf isomorph.tar.gz -C "$HOME" isomorph
+
+They unpack:
+
+    tar xzf isomorph.tar.gz -C "$HOME"
+
+Or copy the folder:
+
+    scp -r ~/isomorph colleague:/home/colleague/isomorph
+
+They must have the files on disk before they install. pip
+installs from that tree; it does not download isomorph from
+PyPI.
+
+
+4. INSTALL (THEY RUN THIS)
+--------------------------
+    cd ~/isomorph
+    ./install.sh
+
+What that does:
+
+  1. Refreshes ~/isomorph from the tree that contains install.sh
+     (a no-op if they already unpacked there).
+  2. Runs:  python3 -m pip install --upgrade ~/isomorph
+     If the active environment is not writable (no conda/venv
+     write access), it retries:
+              python3 -m pip install --upgrade --user ~/isomorph
+  3. Imports the house names and prints the installed file path.
+
+`--user` lands in ~/.local/lib/pythonX.Y/site-packages, which
+Python already searches. A writable conda or venv install lands
+next to MyHDL in that environment's site-packages.
+
+Force the home site-packages:
+
+    ./install.sh --user
+
+Use a specific interpreter:
+
+    PYTHON=/path/to/python3.12 ./install.sh
+
+Developers who want the share tree to track the files on disk
+(no copy into site-packages):
+
+    ./install.sh --editable
+
+
+5. CHECK
+--------
+In a new shell (so you are not sitting on an old PYTHONPATH):
+
+    python3 -c "import isomorph; print(isomorph.__file__)"
+
+You should see either:
+
+    .../site-packages/isomorph/__init__.py
+    ~/.local/lib/pythonX.Y/site-packages/isomorph/__init__.py
+
+not a stray copy on PYTHONPATH. Then:
+
+    python3 -c "from isomorph import block, signal, always_ff"
+
+Convert:
+
+    python3 -m isomorph design.py
+    python3 -m isomorph design.py --sv --vhdl --c99
+    python3 -m isomorph dump design.py
+
+
+6. WRITE A DESIGN
+-----------------
+A file design.py in any directory:
+
+    from isomorph import (block, signal, signals, enum, always_ff,
+        always_comb, assign, concat, replicate, bits, struct,
+        interface, interfaces, attr, open_port, instances)
+
+    @block
+    def add2 (i_a, i_b, o_sum, WIDTH = 4):
+        @always_comb
+        def sum_comb ():
+            o_sum.next = (i_a + i_b)[WIDTH-1:0]
+        return instances()
+
+    if (__name__ == '__main__'):
+        from isomorph import convert
+        convert(add2(i_a = signal(4), i_b = signal(4),
+                     o_sum = signal(4)))
+
+    python3 design.py
+
+writes build/add2.sv and prints the path.
+
+
+7. UPDATE
+---------
+You (maintainer): change the development tree, then
+
+    ./install.sh --pack
+    tar czf isomorph.tar.gz -C "$HOME" isomorph
+
+They: replace ~/isomorph with the new copy (or unpack over it)
+and run ./install.sh again. pip --upgrade replaces the previous
+install.
+
+
+8. UNINSTALL
+------------
+    python3 -m pip uninstall isomorph
+
+Remove the share tree if you want:
+
+    rm -rf ~/isomorph
+
+That does not uninstall the pip package by itself; run pip
+uninstall as well.
+
+
+9. IF IMPORT FAILS
+------------------
+  - python3 -c "import sys; print(sys.executable)"
+    install.sh used a different python than the one you run.
+    PYTHON=/the/right/python ./install.sh
+  - python3 -c "import isomorph; print(isomorph.__file__)"
+    If this is an old tree, unset PYTHONPATH. Isomorph must
+    come from site-packages after a colleague install.
+  - pip too old:  python3 -m pip install --upgrade pip
+    then ./install.sh again.
+  - Permission error on site-packages:  ./install.sh --user
