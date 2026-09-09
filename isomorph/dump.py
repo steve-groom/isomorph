@@ -52,11 +52,16 @@ def stmts (body, indent):
         for c in getattr(s, 'comments', []):
             out.append(f'{pad}{c}')
         tail = f'    {s.trailing}' if getattr(s, 'trailing', None) else ''
-        if isinstance(s, ir.Assign):
+        if isinstance(s, ir.Comment):
+            out.append(f'{pad}{s.text}')
+        elif isinstance(s, ir.Assign):
             out.append(f'{pad}{ir.render(s.target)} = {ir.render(s.value)}{tail}')
         elif isinstance(s, ir.If):
             first = True
-            for cond, b in s.branches:
+            headers = getattr(s, 'branch_comments', [])
+            for i, (cond, b) in enumerate(s.branches):
+                for c in (headers[i] if i < len(headers) else []):
+                    out.append(f'{pad}{c}')
                 if cond is None:
                     out.append(f'{pad}else:' if not first else f'{pad}always:')
                 else:

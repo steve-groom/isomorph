@@ -556,6 +556,8 @@ def stmt_lines (ctx, body, indent):
             w = s.value.width
             lines.append(f'{pad}return ({c_expr(ctx, s.value)}) & '
                          f'{mask_expr(w)};')
+        elif isinstance(s, ir.Comment):
+            lines.append(pad + '//' + s.text.lstrip('#'))
         else:
             lines.append(f'{pad}/* <{type(s).__name__}> */;')
     return lines

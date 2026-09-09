@@ -560,6 +560,8 @@ def stmt_lines (ctx, body, indent):
         elif isinstance(s, ir.Return):
             line = f'{pad}return {vhdl_expr(ctx, s.value)};'
             lines.append(with_trailing(line, trailing))
+        elif isinstance(s, ir.Comment):
+            lines.append(pad + as_comment(s.text))
         else:
             lines.append(f'{pad}-- <{type(s).__name__}>')
     return lines
@@ -585,7 +587,9 @@ def if_lines (ctx, node, indent):
         return stmt_lines(ctx, node.branches[0][1], indent)
     pad = ' ' * indent
     lines = []
+    headers = getattr(node, 'branch_comments', [])
     for i, (cond, body) in enumerate(node.branches):
+        lines += comment_lines(headers[i] if i < len(headers) else [], indent)
         if cond is None:
             head = f'{pad}else'
         elif i == 0:

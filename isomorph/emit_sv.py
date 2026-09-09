@@ -356,6 +356,8 @@ def stmt_lines (body, indent, nonblocking):
         elif isinstance(s, ir.Return):
             line = f'{pad}return {sv_expr(s.value)};'
             lines.append(with_trailing(line, trailing))
+        elif isinstance(s, ir.Comment):
+            lines.append(pad + as_comment(s.text))
         else:
             lines.append(f'{pad}// <{type(s).__name__}>')
     return lines
@@ -374,8 +376,17 @@ def if_lines (node, indent, nonblocking):
     else:
         first_kw = 'if'
     lines = []
+    headers = getattr(node, 'branch_comments', [])
     for i, (cond, body) in enumerate(node.branches):
-        if cond is None:
+        above = headers[i] if i < len(headers) else []
+        if above:
+            # a comment written above the keyword keeps that place: close
+            # the previous branch first, then the comment, then the keyword
+            lines.append(f'{pad}end')
+            lines += comment_lines(above, indent)
+            head = (f'{pad}else begin' if cond is None
+                    else f'{pad}else if ({cond_text(cond)}) begin')
+        elif cond is None:
             head = f'{pad}end else begin'
         elif i == 0:
             head = f'{pad}{first_kw} ({cond_text(cond)}) begin'

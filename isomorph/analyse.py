@@ -4,6 +4,7 @@ rule (4.3) and the checks (4.7) of SPEC.txt."""
 import ast
 import inspect
 import textwrap
+import sys
 import tokenize
 from types import SimpleNamespace, FunctionType
 
@@ -53,6 +54,7 @@ class Analyser:
         self.warnings = []
         self.child_directions = child_directions or {}
         self.comments = source_comments(elaborated.func)
+        self.consumed = set()           # comment lines already placed
 
     def name_of (self, sig):
         """A signal's name inside this block: its port name here if it
@@ -60,12 +62,45 @@ class Analyser:
         return self.e.port_names.get(id(sig), sig.name)
 
     def comments_before (self, line, previous):
-        """Full-line comments between the previous item and this line."""
+        """Full-line comments between the previous item and this line.
+
+        A comment is placed once. Suites are analysed before the items
+        around them, so a comment that closes a suite is claimed there
+        and does not reappear above whatever follows."""
         out = []
         for l in range(previous + 1, line):
+            if l in self.consumed:
+                continue
             c = self.comments.get(l)
             if c is not None and c[0]:
                 out.append(c[1])
+                self.consumed.add(l)
+        return out
+
+    def suite_tail (self, nodes):
+        """Comments after the last statement of a suite, indented at
+        least as far as it. ast ends a suite at its last statement, so
+        without this they would drift onto the next item."""
+        if not nodes:
+            return []
+        indent = nodes[0].col_offset
+        out = []
+        line = nodes[-1].end_lineno + 1
+        while line - 1 < len(self.source_lines):
+            text = self.source_lines[line - 1]
+            stripped = text.strip()
+            if not stripped:
+                line += 1
+                continue
+            if not stripped.startswith('#'):
+                break
+            if len(text) - len(text.lstrip()) < indent:
+                break
+            absolute = self.line_base + line
+            if absolute not in self.consumed:
+                self.consumed.add(absolute)
+                out.append(stripped)
+            line += 1
         return out
 
     def trailing (self, line):
@@ -251,7 +286,21 @@ class Analyser:
                           proc.polarity, body, dict(proc.attributes),
                           proc.line)
 
-    def block_body (self, nodes, scope, opener_line):
+    def else_line (self, node):
+        """Line of the `else:` keyword. Comments under it belong to the
+        else branch; comments above it stay with the branch that ends
+        there. ast records no line for `else`, so read it back from the
+        source between the two suites."""
+        start = node.body[-1].end_lineno
+        stop = node.orelse[0].lineno
+        for line in range(start + 1, stop):
+            index = line - 1
+            if index < len(self.source_lines):
+                if self.source_lines[index].strip().startswith('else'):
+                    return line
+        return stop - 1
+
+    def block_body (self, nodes, scope, opener_line, tail = True):
         """Statements of one suite with their comments attached."""
         out = []
         previous = self.line_base + opener_line
@@ -263,6 +312,9 @@ class Analyser:
                 s.trailing = self.trailing(line)
                 out.append(s)
             previous = self.line_base + getattr(node, 'end_lineno', node.lineno)
+        if tail:
+            for text in self.suite_tail(nodes):
+                out.append(ir.Comment(text, previous))
         return out
 
     def cont_assign (self, a):
@@ -299,6 +351,7 @@ class Analyser:
                 return ir.If([(None, stmts)],
                              self.line_base + node.lineno) if stmts else None
             branches = []
+            headers = [[]]              # comments above each elif / else
             current = node
             while True:
                 cond = self.expression(current.test, scope)
@@ -308,15 +361,21 @@ class Analyser:
                                          f'{self.line_base + current.lineno}')
                 branches.append((cond, self.block_body(current.body, scope,
                                                         current.lineno)))
+                body_end = self.line_base + current.body[-1].end_lineno
                 if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
                     current = current.orelse[0]
+                    headers.append(self.comments_before(
+                        self.line_base + current.lineno, body_end))
                     continue
                 if current.orelse:
-                    else_line = current.orelse[0].lineno - 1
-                    branches.append((None, self.block_body(current.orelse, scope,
-                                                           else_line)))
+                    keyword = self.else_line(current)
+                    headers.append(self.comments_before(
+                        self.line_base + keyword, body_end))
+                    branches.append((None, self.block_body(
+                        current.orelse, scope, keyword)))
                 break
             node_if = ir.If(branches, self.line_base + node.lineno)
+            node_if.branch_comments = headers
             node_if.unique = self.if_is_unique(branches)
             return node_if
         if isinstance(node, ast.For):
@@ -1199,8 +1258,17 @@ def source_comments (func):
 
 
 def header_comment (func):
-    """The block function's docstring only, as a multi-line header."""
-    return inspect.getdoc(func) or ''
+    """The block's docstring, or failing that its module's (SPEC 4.1).
+
+    One block per file is the house style, so a file whose docstring
+    describes the design gets that text as the module header."""
+    own = inspect.getdoc(func)
+    if own:
+        return own
+    name = getattr(func, '__module__', None)
+    module = sys.modules.get(name) if name else None
+    text = module.__doc__ if module is not None else None
+    return inspect.cleandoc(text) if text else ''
 
 
 def analyse (elaborated):

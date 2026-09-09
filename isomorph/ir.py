@@ -36,6 +36,18 @@ class If:
     unique: bool = False       # mutually exclusive conds: unique if (5.3)
     comments: list = field(default_factory = list)
     trailing: str = None
+    # full-line comments written above each elif / else keyword, one
+    # list per entry of branches (the first is always empty)
+    branch_comments: list = field(default_factory = list)
+
+
+@dataclass
+class Comment:
+    """A full-line comment that follows the last statement of a suite.
+    Every other comment rides on the item below it; this one has no
+    item below it, so it is a statement of its own."""
+    text: str
+    line: int = 0
 
 
 @dataclass
