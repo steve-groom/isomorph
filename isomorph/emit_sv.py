@@ -309,8 +309,12 @@ def signal_lines (m):
             name = f'{name} [{s.array}]'
         marks = attribute_text(s.attributes)
         prefix = f'    {marks}\n' if marks else ''
+        if s.attributes.get('unused'):
+            prefix = '    /* verilator lint_off UNUSEDSIGNAL */\n' + prefix
         line = prefix + f'    {packed} {name};'
         lines.append(with_trailing(line, s.trailing))
+        if s.attributes.get('unused'):
+            lines.append('    /* verilator lint_on UNUSEDSIGNAL */')
     if lines:
         lines.append('')
     return lines

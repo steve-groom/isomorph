@@ -788,7 +788,7 @@ def vhdl_expr (ctx, e, index = False):
         if name in ctx.int_names:
             if index:
                 return name
-            return f'std_logic_vector(to_unsigned({name}, {e.width}))'
+            return sl_literal(name, e.width)
         return lookup(ctx, name)
     if op == 'const':
         if index:
@@ -837,7 +837,7 @@ def vhdl_expr (ctx, e, index = False):
         return inner
     if op == 'extend':
         if a[0].op == 'ref' and a[0].value in ctx.int_names:
-            return f'std_logic_vector(to_unsigned({a[0].value}, {e.width}))'
+            return sl_literal(str(a[0].value), e.width)
         inner = vhdl_expr(ctx, a[0])
         if a[0].width == 1:
             zeros = e.width - 1
@@ -888,13 +888,22 @@ def is_int_tree (ctx, e):
     return False
 
 
+def sl_literal (text, width):
+    """A constant at a given width. One bit is std_logic here, and a
+    one-element vector will not compare against it, so a single bit
+    becomes a character literal."""
+    if width == 1:
+        return f"to_unsigned({text}, 1)(0)"
+    return f'std_logic_vector(to_unsigned({text}, {width}))'
+
+
 def vhdl_binop (ctx, e):
     op = e.value
     a, b = e.args
     w = e.width
     if is_int_tree(ctx, e):
         text = (f'({vhdl_index(ctx, a)} {op} {vhdl_index(ctx, b)})')
-        return f'std_logic_vector(to_unsigned({text}, {w}))'
+        return sl_literal(text, w)
     if op in ('&', '|', '^'):
         vop = {'&': 'and', '|': 'or', '^': 'xor'}[op]
         return f'({vhdl_expr(ctx, a)} {vop} {vhdl_expr(ctx, b)})'
