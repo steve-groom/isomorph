@@ -289,14 +289,27 @@ def emit_source (modules, top):
     return '\n'.join(lines)
 
 
+def enum_member (module_name, member_name):
+    """One enum member, as a C macro name.
+
+    Qualified by the module, because a define is global and a state
+    machine's states are not. one peripheral calls its first state IDLE and
+    so does the bridge above it, one of them one-hot and the other sequential,
+    and the first define won: the bridge's IDLE compiled as 1 instead
+    of 0 and only the C99 backend was wrong. SystemVerilog scopes an
+    enum to its module and VHDL to its entity; C has to be told."""
+    return f'{module_name}__{member_name}'
+
+
 def enum_defines (m, seen):
     lines = []
     for name, enum_type in m.enums.items():
         for member in enum_type.members:
-            if member.name in seen:
+            macro = enum_member(m.name, member.name)
+            if macro in seen:
                 continue
-            seen.add(member.name)
-            lines.append(f'#define {member.name} {int(member.value)}ULL')
+            seen.add(macro)
+            lines.append(f'#define {macro} {int(member.value)}ULL')
         if lines:
             lines.append('')
     return lines
@@ -840,7 +853,7 @@ def c_expr (ctx, e, lhs = False, index = False):
             return str(int(e.value))
         return f'{int(e.value)}ULL'
     if op == 'enum':
-        return e.value.name
+        return enum_member(ctx.m.name, e.value.name)
     if op == 'bit':
         if is_array_element(ctx, e):
             name = c_expr(ctx, a[0], lhs = lhs)
