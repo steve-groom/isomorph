@@ -134,7 +134,12 @@ def fold_line (line, indent, limit = None):
             break
         out.append(head)
         rest = pad + rest[points[-1]:].lstrip()
-        if len(out) > 40:               # a pathological line; stop
+        # each pass removes at least one character, so this cannot
+        # run away; the cap is only there in case it ever could. A
+        # memory image is thousands of values and folds into hundreds
+        # of lines, which is fine and is what an initialiser looks
+        # like.
+        if len(out) > 20000:
             break
     out.append(rest)
     return out
