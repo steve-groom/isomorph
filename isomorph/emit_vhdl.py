@@ -1213,9 +1213,16 @@ def vhdl_slice (ctx, e):
 
 
 def vhdl_part (ctx, e):
+    """A part select, ascending from a computed base.
+
+    One bit wide is an index rather than a slice: a one-element slice
+    of a std_logic_vector is still a vector in VHDL, and what a
+    one-bit selection is being used as is a std_logic."""
     base, idx = e.args
     w = e.value
     i = vhdl_index(ctx, idx)
+    if w == 1:
+        return f'{vhdl_expr(ctx, base)}({i})'
     return f'{vhdl_expr(ctx, base)}(({i}) + {w - 1} downto ({i}))'
 
 
@@ -1223,6 +1230,8 @@ def vhdl_part_down (ctx, e):
     base, idx = e.args
     w = e.value
     i = vhdl_index(ctx, idx)
+    if w == 1:
+        return f'{vhdl_expr(ctx, base)}({i})'
     return f'{vhdl_expr(ctx, base)}(({i}) downto ({i}) - {w - 1})'
 
 
