@@ -6,7 +6,7 @@ do not settle in SETTLE_LIMIT passes are an error.
 """
 from . import ir
 from .emit_c99 import (SETTLE_LIMIT, ff_driven_names,
-                       hierarchy_clocks, outer_clock)
+                       hierarchy_clocks, outer_clock, alias_source)
 from .signal import IsomorphError
 
 
@@ -260,7 +260,10 @@ class Executor:
             if actual is None or getattr(actual, 'op', None) != 'ref':
                 continue
             for name in inner:
-                if outer_clock(formal, actual.value, name) == parent_clock:
+                outer = outer_clock(formal, actual.value, name)
+                if outer is None:
+                    continue
+                if alias_source(store.m, outer) == parent_clock:
                     return name
         return None
 

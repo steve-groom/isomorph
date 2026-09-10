@@ -581,9 +581,47 @@ def hierarchy_clocks (m, by_name):
                 continue
             for name in inner:
                 outer = outer_clock(formal, actual.value, name)
-                if outer is not None and outer not in out:
+                if outer is None:
+                    continue
+                outer = alias_source(m, outer)
+                if outer not in out:
                     out.append(outer)
     return out
+
+
+def assign_name (target):
+    """The plain name a continuous assignment writes, or None."""
+    if getattr(target, 'op', None) == 'ref':
+        return target.value
+    return None
+
+
+def alias_source (m, name):
+    """The name a clock really comes from, through this module's wires.
+
+    assign(pll0_clocks[0], lambda: pll0_clock0) is a wire, and a wire
+    is not a clock domain of its own. A board takes one clock pin and
+    hands it to a block that wants an array of them, or renames it on
+    the way past, and a simulator that knows clocks by name would
+    otherwise make the wire a domain nothing drives and ignore the pin
+    that does.
+    """
+    if m is None:
+        return name
+    seen = set()
+    while name not in seen:
+        seen.add(name)
+        nxt = None
+        for a in m.assigns:
+            if assign_name(a.target) != name:
+                continue
+            if getattr(a.value, 'op', None) == 'ref':
+                nxt = a.value.value
+            break
+        if nxt is None:
+            break
+        name = nxt
+    return name
 
 
 def outer_clock (formal, actual, inner):
@@ -602,7 +640,7 @@ def outer_clock (formal, actual, inner):
     return None
 
 
-def map_inst_clock (inst, child, parent_clock, by_name):
+def map_inst_clock (inst, child, parent_clock, by_name, parent = None):
     """The child's own name for a clock the parent drives, or None.
 
     Matched by connection and never by name. A child is clocked on the
@@ -631,7 +669,10 @@ def map_inst_clock (inst, child, parent_clock, by_name):
         if actual is None or getattr(actual, 'op', None) != 'ref':
             continue
         for name in inner:
-            if outer_clock(formal, actual.value, name) == parent_clock:
+            outer = outer_clock(formal, actual.value, name)
+            if outer is None:
+                continue
+            if alias_source(parent, outer) == parent_clock:
                 return name
     return None
 
@@ -656,7 +697,7 @@ def posedge_lines (m, by_name, clock):
             if hierarchy_clocks(child, by_name):
                 lines.append(f'    {inst.module}_posedge(&s->{inst.name});')
             continue
-        mapped = map_inst_clock(inst, child, clock, by_name)
+        mapped = map_inst_clock(inst, child, clock, by_name, m)
         if mapped:
             lines.append(f'    {inst.module}_posedge_'
                          f'{clock_id(mapped)}(&s->{inst.name});')
