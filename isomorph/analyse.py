@@ -54,6 +54,7 @@ class Analyser:
         self.warnings = []
         self.child_directions = child_directions or {}
         self.comments = source_comments(elaborated.func)
+        self.file_lines = file_lines(self.file)
         self.consumed = set()           # comment lines already placed
         self.loop_names = set()         # for-loop indices currently open
 
@@ -77,6 +78,36 @@ class Analyser:
                 out.append(c[1])
                 self.consumed.add(l)
         return out
+
+    def leading_comments (self, line):
+        """The comment block written directly above an item.
+
+        A signal declaration is one of a sequence, so what belongs to it
+        is whatever lies between it and the one before. A process or an
+        instance is not, so what belongs to it is the run of full-line
+        comments immediately above, however long, stopping at the first
+        line that is neither a comment nor a decorator. A fixed lookback
+        window drops the top of a longer block, which is exactly where
+        the section bar lives."""
+        start = line
+        while start > 1:
+            above = start - 1
+            if above in self.consumed:
+                break
+            if self.file_line(above).lstrip().startswith('@'):
+                start = above
+                continue
+            c = self.comments.get(above)
+            if (c is None) or (not c[0]):
+                break
+            start = above
+        return self.comments_before(line, start - 1)
+
+    def file_line (self, line):
+        """One line of the file that defines this block, 1 based."""
+        if 1 <= line <= len(self.file_lines):
+            return self.file_lines[line - 1]
+        return ''
 
     def suite_tail (self, nodes):
         """Comments after the last statement of a suite, indented at
@@ -158,7 +189,7 @@ class Analyser:
                     s.comments.append(extra)
                 previous = max(previous, line)
         for p in processes:
-            p.comments = self.comments_before(p.line, p.line - 4)
+            p.comments = self.leading_comments(p.line)
         instances = [self.instance(i) for i in e.instances.values()]
         mod = ir.Module(e.module_name, e.block_name, dict(e.parameters),
                          ports, signals, dict(e.constants), dict(e.enums),
@@ -224,8 +255,7 @@ class Analyser:
                 ports[formal] = ir.Expr('ref', actual.width, value = aname)
                 self.read.add(aname.split('[')[0])
         return ir.Instance(child.instance_name, child.module_name, ports,
-                           child.line, self.comments_before(child.line,
-                                                            child.line - 3))
+                           child.line, self.leading_comments(child.line))
 
     # ---- bodies ------------------------------------------------------------
     def _tree (self, func):
@@ -404,7 +434,7 @@ class Analyser:
         value = self.expression(lam.body, scope)
         value = self.fit(value, target.width, lam)
         return ir.ContAssign(target, value, a.line,
-                             self.comments_before(a.line, a.line - 3),
+                             self.leading_comments(a.line),
                              self.trailing(a.line))
 
     # ---- statements -------------------------------------------------------
@@ -1350,6 +1380,15 @@ def signature_lines (func):
         out['__previous__' + a.arg] = previous
         previous = base + a.lineno
     return out
+
+
+def file_lines (path):
+    """Every line of a source file, or nothing if it cannot be read."""
+    try:
+        with tokenize.open(path) as handle:
+            return handle.read().splitlines()
+    except (OSError, TypeError, ValueError):
+        return []
 
 
 def source_comments (func):

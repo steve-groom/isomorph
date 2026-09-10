@@ -29,6 +29,29 @@ def min_width (value):
 
 BAR_VHDL = '--' + '-' * 77
 
+HOUSE_LIMIT = 79
+
+
+def fit_comment (line, indent, marker):
+    """One emitted comment line, kept inside the 79-column house limit.
+
+    The Python marker is one character and the HDL's is two, so a
+    comment written right up to column 79 lands one past it. A section
+    bar is redrawn to end exactly at 79; any other line is wrapped at a
+    word and continues at the same indent. Neither a bar that overhangs
+    nor one that stops short is what was written."""
+    if len(line) <= HOUSE_LIMIT:
+        return [line]
+    pad = ' ' * indent
+    body = line.strip()
+    text = body[len(marker):]
+    if text and (set(text) <= set('-')):
+        return [pad + marker + '-' * (HOUSE_LIMIT - indent - len(marker))]
+    width = max(20, HOUSE_LIMIT - indent - len(marker) - 1)
+    pieces = textwrap.wrap(text.strip(), width) or ['']
+    return [f'{pad}{marker} {piece}' for piece in pieces]
+
+
 
 def emit_vhdl (modules):
     """VHDL-2008 text for the module list, leaves first.
@@ -190,6 +213,79 @@ def sl_type (width, kind = 'vector', typ = None, params = None):
     return f'std_logic_vector({sl_bound(params, width)} downto 0)'
 
 
+
+def assignment_split (line):
+    """Index just past the assignment arrow of a statement, or None.
+
+    Only a real assignment: the text before the arrow, with anything
+    bracketed removed, has to be a single name. That keeps a comparison
+    inside a condition from being mistaken for one. A VHDL attribute
+    specification or type declaration breaks after its `is` instead,
+    which is the only place either of them can."""
+    stripped = line.lstrip()
+    if stripped.startswith('attribute ') or stripped.startswith('type '):
+        cut = line.find(' is ')
+        return (cut + 4) if (cut >= 0) else None
+    depth = 0
+    index = 0
+    while index < len(line):
+        ch = line[index]
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            for arrow in (' <= ', ' := ', ' = '):
+                if line.startswith(arrow, index):
+                    if is_target(line[:index]):
+                        return index + len(arrow)
+                    return None
+        index += 1
+    return None
+
+
+def is_target (text):
+    """Does this read as the left hand side of an assignment?"""
+    out = []
+    depth = 0
+    for ch in text:
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    name = ''.join(out).strip()
+    return bool(name) and (name[0].isalpha() or name[0] == '_') \
+        and (' ' not in name)
+
+
+def wrap_long_lines (lines, marker, step):
+    """Break an over-long statement once, after its assignment arrow.
+
+    The 79-column house limit is about what isomorph emits, not only
+    about what was written, and a wide name with a concatenation on the
+    right of it passes 79 easily. If the expression will not fit on a
+    line of its own either, the line is left as it is: a break in the
+    wrong place reads worse than a long line."""
+    out = []
+    for line in lines:
+        if (len(line) <= HOUSE_LIMIT) or (marker in line):
+            out.append(line)
+            continue
+        cut = assignment_split(line)
+        if cut is None:
+            out.append(line)
+            continue
+        indent = ' ' * (len(line) - len(line.lstrip()) + step)
+        tail = indent + line[cut:].strip()
+        if len(tail) > HOUSE_LIMIT:
+            out.append(line)
+            continue
+        out.append(line[:cut].rstrip())
+        out.append(tail)
+    return out
+
 def emit_unit (m, by_name, top_name):
     lines = []
     lines += header_lines(m)
@@ -205,7 +301,7 @@ def emit_unit (m, by_name, top_name):
     lines += entity_lines(m)
     lines.append('')
     lines += architecture_lines(m, by_name)
-    return '\n'.join(lines)
+    return '\n'.join(wrap_long_lines(lines, '--', 2))
 
 
 def header_lines (m):
@@ -215,7 +311,10 @@ def header_lines (m):
     body = m.header.strip('\n').splitlines()
     lines = []
     for line in body:
-        lines.append('-- ' + line if line.strip() else '--')
+        if line.strip():
+            lines += fit_comment('-- ' + line, 0, '--')
+        else:
+            lines.append('--')
     lines.append('')
     return lines
 
@@ -238,7 +337,23 @@ def as_comment (text):
 
 def comment_lines (comments, indent):
     pad = ' ' * indent
-    return [pad + as_comment(c) for c in (comments or [])]
+    out = []
+    for c in (comments or []):
+        out += fit_comment(pad + as_comment(c), indent, '--')
+    return out
+
+
+def trailing_lines (line, trailing, indent):
+    """A declaration and the comment written after it on the same line.
+
+    Beside it when the two fit inside the house limit, on its own line
+    above when they do not."""
+    if not trailing:
+        return [line]
+    joined = with_trailing(line, trailing)
+    if len(joined) <= HOUSE_LIMIT:
+        return [joined]
+    return comment_lines([trailing], indent) + [line]
 
 
 def with_trailing (line, trailing):
@@ -308,8 +423,15 @@ def port_lines (m):
         line = '    ' + body[i].rstrip() + semi
         if p.trailing:
             pad = ' ' * max(1, wb + 4 + 1 + 1 - len(line))
-            line = line + pad + as_comment(p.trailing)
-        out.append(line)
+            aligned = line + pad + as_comment(p.trailing)
+            if len(aligned) <= HOUSE_LIMIT:
+                out.append(aligned)
+            else:
+                # it will not fit beside the port, so it goes above it
+                out += comment_lines([p.trailing], 4)
+                out.append(line)
+        else:
+            out.append(line)
     return out
 
 
@@ -376,8 +498,8 @@ def signal_lines (m):
             typ = array_type_name(s.name, s.width, s.array)
         else:
             typ = sl_type(s.width, s.kind, s.type, m.parameters)
-        line = f'  signal {s.name} : {typ};'
-        lines.append(with_trailing(line, s.trailing))
+        lines += trailing_lines(f'  signal {s.name} : {typ};',
+                                s.trailing, 2)
     if lines:
         lines.append('')
     return lines

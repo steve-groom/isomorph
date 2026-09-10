@@ -20,6 +20,29 @@ def min_width (value):
 
 BAR_SV = '//' + '-' * 77
 
+HOUSE_LIMIT = 79
+
+
+def fit_comment (line, indent, marker):
+    """One emitted comment line, kept inside the 79-column house limit.
+
+    The Python marker is one character and the HDL's is two, so a
+    comment written right up to column 79 lands one past it. A section
+    bar is redrawn to end exactly at 79; any other line is wrapped at a
+    word and continues at the same indent. Neither a bar that overhangs
+    nor one that stops short is what was written."""
+    if len(line) <= HOUSE_LIMIT:
+        return [line]
+    pad = ' ' * indent
+    body = line.strip()
+    text = body[len(marker):]
+    if text and (set(text) <= set('-')):
+        return [pad + marker + '-' * (HOUSE_LIMIT - indent - len(marker))]
+    width = max(20, HOUSE_LIMIT - indent - len(marker) - 1)
+    pieces = textwrap.wrap(text.strip(), width) or ['']
+    return [f'{pad}{marker} {piece}' for piece in pieces]
+
+
 
 def emit_sv (modules):
     """SystemVerilog text for the module list, leaves first.
@@ -65,18 +88,96 @@ def lint_sv (path, top = None):
     return result.stderr
 
 
+
+def assignment_split (line):
+    """Index just past the assignment arrow of a statement, or None.
+
+    Only a real assignment: the text before the arrow, with anything
+    bracketed removed, has to be a single name. That keeps a comparison
+    inside a condition from being mistaken for one. A VHDL attribute
+    specification or type declaration breaks after its `is` instead,
+    which is the only place either of them can."""
+    stripped = line.lstrip()
+    if stripped.startswith('attribute ') or stripped.startswith('type '):
+        cut = line.find(' is ')
+        return (cut + 4) if (cut >= 0) else None
+    depth = 0
+    index = 0
+    while index < len(line):
+        ch = line[index]
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            for arrow in (' <= ', ' := ', ' = '):
+                if line.startswith(arrow, index):
+                    if is_target(line[:index]):
+                        return index + len(arrow)
+                    return None
+        index += 1
+    return None
+
+
+def is_target (text):
+    """Does this read as the left hand side of an assignment?"""
+    out = []
+    depth = 0
+    for ch in text:
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    name = ''.join(out).strip()
+    return bool(name) and (name[0].isalpha() or name[0] == '_') \
+        and (' ' not in name)
+
+
+def wrap_long_lines (lines, marker, step):
+    """Break an over-long statement once, after its assignment arrow.
+
+    The 79-column house limit is about what isomorph emits, not only
+    about what was written, and a wide name with a concatenation on the
+    right of it passes 79 easily. If the expression will not fit on a
+    line of its own either, the line is left as it is: a break in the
+    wrong place reads worse than a long line."""
+    out = []
+    for line in lines:
+        if (len(line) <= HOUSE_LIMIT) or (marker in line):
+            out.append(line)
+            continue
+        cut = assignment_split(line)
+        if cut is None:
+            out.append(line)
+            continue
+        indent = ' ' * (len(line) - len(line.lstrip()) + step)
+        tail = indent + line[cut:].strip()
+        if len(tail) > HOUSE_LIMIT:
+            out.append(line)
+            continue
+        out.append(line[:cut].rstrip())
+        out.append(tail)
+    return out
+
 def emit_module (m):
     lines = []
     lines += header_lines(m)
-    lines.append(f'module {m.name} (')
-    if m.ports:
-        lines += port_lines(m)
+    ports = port_lines(m) if m.ports else []
+    rest = (enum_lines(m) + signal_lines(m) + function_lines(m)
+            + item_lines(m))
+    params = parameter_lines(m, rest + ports)
+    if params:
+        lines.append(f'module {m.name} #(')
+        lines += params
+        lines.append(') (')
+    else:
+        lines.append(f'module {m.name} (')
+    lines += ports
     lines.append(');')
     lines.append('')
     body = []
-    rest = (enum_lines(m) + signal_lines(m) + function_lines(m)
-            + item_lines(m))
-    body += parameter_lines(m, rest)
     body += localparam_lines(m, rest)
     body += rest
     # indent body, keep blank lines
@@ -88,7 +189,7 @@ def emit_module (m):
     if lines[-1] != '':
         lines.append('')
     lines.append('endmodule')
-    return '\n'.join(lines)
+    return '\n'.join(wrap_long_lines(lines, '//', 4))
 
 
 def header_lines (m):
@@ -101,7 +202,10 @@ def header_lines (m):
         return []
     lines = []
     for line in m.header.strip('\n').splitlines():
-        lines.append('// ' + line if line.strip() else '//')
+        if line.strip():
+            lines += fit_comment('// ' + line, 0, '//')
+        else:
+            lines.append('//')
     lines.append('')
     return lines
 
@@ -124,13 +228,30 @@ def as_comment (text):
 
 def comment_lines (comments, indent):
     pad = ' ' * indent
-    return [pad + as_comment(c) for c in (comments or [])]
+    out = []
+    for c in (comments or []):
+        out += fit_comment(pad + as_comment(c), indent, '//')
+    return out
 
 
 def with_trailing (line, trailing):
     if trailing:
         return line + '  ' + as_comment(trailing)
     return line
+
+
+def trailing_lines (line, trailing, indent):
+    """A declaration and the comment written after it on the same line.
+
+    Beside it when the two fit inside the house limit, on its own line
+    above when they do not. Dropping the comment and letting the line
+    run past column 79 are both worse."""
+    if not trailing:
+        return [line]
+    joined = with_trailing(line, trailing)
+    if len(joined) <= HOUSE_LIMIT:
+        return [joined]
+    return comment_lines([trailing], indent) + [line]
 
 
 def width_parameter (params, width):
@@ -216,17 +337,22 @@ def port_lines (m):
     for i, p in enumerate(ports):
         comma = ',' if i < len(ports) - 1 else ''
         out += comment_lines(p.comments, 4)
-        marks = attribute_text(p.attributes)
-        if marks:
-            out.append('    ' + marks)
+        out += attribute_lines(p.attributes, 4)
         waived = p.attributes.get('unused')
         if waived:
             out.append('    /* verilator lint_off UNUSEDSIGNAL */')
         line = '    ' + body[i].rstrip() + comma
         if p.trailing:
             pad = ' ' * max(1, wb + 5 + 1 - len(line))
-            line = line + pad + as_comment(p.trailing)
-        out.append(line)
+            aligned = line + pad + as_comment(p.trailing)
+            if len(aligned) <= HOUSE_LIMIT:
+                out.append(aligned)
+            else:
+                # it will not fit beside the port, so it goes above it
+                out += comment_lines([p.trailing], 4)
+                out.append(line)
+        else:
+            out.append(line)
         if waived:
             out.append('    /* verilator lint_on UNUSEDSIGNAL */')
     return out
@@ -249,16 +375,25 @@ def used_in (name, body):
 
 
 def parameter_lines (m, body = None):
-    lines = []
+    """Parameters as an ANSI parameter port list, ahead of the ports.
+
+    A port width may name one, and a name must be declared before it is
+    used, so `module m #(parameter WIDTH = 8) (input logic [WIDTH-1:0]
+    i_data)` is the only legal order. Declaring them in the body after
+    the port list is what MyHDL emitted; Verilator accepts it, Quartus
+    and Vivado do not."""
+    kept = []
     for name, value in m.parameters.items():
         if isinstance(value, bool):
             continue
         if isinstance(value, int):
             if body is not None and not used_in(name, body):
                 continue
-            lines.append(f'    parameter {name} = {value};')
-    if lines:
-        lines.append('')
+            kept.append((name, value))
+    lines = []
+    for index, (name, value) in enumerate(kept):
+        comma = ',' if index < len(kept) - 1 else ''
+        lines.append(f'    parameter {name} = {value}{comma}')
     return lines
 
 
@@ -307,6 +442,31 @@ def attribute_text (attributes):
     return '(* ' + ', '.join(parts) + ' *)' if parts else ''
 
 
+def attribute_lines (attributes, indent):
+    """(* ... *) broken across lines when it will not fit on one.
+
+    No two vendors spell the same attribute the same way, so a signal
+    that has to survive all of them carries five of them, and that is
+    longer than a line."""
+    text = attribute_text(attributes)
+    if not text:
+        return []
+    pad = ' ' * indent
+    if len(pad + text) <= HOUSE_LIMIT:
+        return [pad + text]
+    parts = [p.strip() for p in text[3:-3].split(', ')]
+    lines = []
+    current = pad + '(* '
+    for index, part in enumerate(parts):
+        piece = part + (' *)' if index == len(parts) - 1 else ',')
+        if len(current + piece) > HOUSE_LIMIT:
+            lines.append(current.rstrip())
+            current = pad + '   '
+        current = current + piece + ' '
+    lines.append(current.rstrip())
+    return lines
+
+
 def signal_lines (m):
     lines = []
     for s in m.signals:
@@ -315,12 +475,10 @@ def signal_lines (m):
         name = s.name
         if s.array:
             name = f'{name} [{s.array}]'
-        marks = attribute_text(s.attributes)
-        prefix = f'    {marks}\n' if marks else ''
         if s.attributes.get('unused'):
-            prefix = '    /* verilator lint_off UNUSEDSIGNAL */\n' + prefix
-        line = prefix + f'    {packed} {name};'
-        lines.append(with_trailing(line, s.trailing))
+            lines.append('    /* verilator lint_off UNUSEDSIGNAL */')
+        lines += attribute_lines(s.attributes, 4)
+        lines += trailing_lines(f'    {packed} {name};', s.trailing, 4)
         if s.attributes.get('unused'):
             lines.append('    /* verilator lint_on UNUSEDSIGNAL */')
     if lines:
