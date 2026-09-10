@@ -12,6 +12,10 @@ from .signal import (Signal, SignalArray, EnumType, StructType,
     elaboration_stack, made_stack, note_made)
 
 
+# past this a module name is a digest of its parameters instead
+NAME_LIMIT = 60
+
+
 def _name_part (value):
     """One parameter value, as part of an identifier.
 
@@ -166,7 +170,19 @@ class Elaborated:
                   if defaults.get(n) is not v and defaults.get(n) != v]
         # Single underscore: VHDL forbids consecutive underscores, and
         # SPEC 4.5 keeps the same identifier in SV, VHDL and C99.
-        return self.block_name + (('_' + '_'.join(suffix)) if suffix else '')
+        if not suffix:
+            return self.block_name
+        tail = '_'.join(suffix)
+        name = f'{self.block_name}_{tail}'
+        if len(name) <= NAME_LIMIT:
+            return name
+        # four thirty-two bit constants spell out to seventy-three
+        # characters, which puts a VHDL instantiation past the column
+        # the house style keeps to and makes a file name nobody can
+        # read anyway. Past the limit the parameters become a digest of
+        # themselves: still one module per distinct set, and short
+        digest = hashlib.sha1(tail.encode('utf-8')).hexdigest()[:8]
+        return f'{self.block_name}_p{digest}'
 
     def walk (self):
         """Every distinct elaborated block below and including this one,

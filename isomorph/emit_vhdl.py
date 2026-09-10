@@ -182,7 +182,13 @@ def array_type_name (name, width, count):
 
 def array_type_decl (tname, width, count):
     elem = sl_type(width)
-    return (f'type {tname} is array (0 to {count - 1}) of {elem};')
+    line = f'type {tname} is array (0 to {count - 1}) of {elem};'
+    if len(line) + 2 <= HOUSE_LIMIT:
+        return line
+    # a wide element and a deep memory spell out past the column the
+    # house style keeps to, so the array half goes on its own line
+    return (f'type {tname} is\n'
+            f'    array (0 to {count - 1}) of {elem};')
 
 
 def array_init_vhdl (s):
