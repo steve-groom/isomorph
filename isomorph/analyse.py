@@ -329,7 +329,8 @@ class Analyser:
     def error (self, node, message):
         line = self.line_base + getattr(node, 'lineno', 0)
         src = ''
-        if getattr(node, 'lineno', 0) and node.lineno - 1 < len(self.source_lines):
+        line = getattr(node, 'lineno', 0)
+        if line and (line - 1) < len(self.source_lines):
             src = self.source_lines[node.lineno - 1]
         raise ConversionError(message, self.file, line, src)
 
@@ -412,7 +413,8 @@ class Analyser:
                 s.comments = self.comments_before(line, previous)
                 s.trailing = self.trailing(line)
                 out.append(s)
-            previous = self.line_base + getattr(node, 'end_lineno', node.lineno)
+            previous = self.line_base + getattr(node, 'end_lineno',
+                                                node.lineno)
         if tail:
             for text in self.suite_tail(nodes):
                 out.append(ir.Comment(text, previous))
@@ -463,7 +465,8 @@ class Analyser:
                 branches.append((cond, self.block_body(current.body, scope,
                                                         current.lineno)))
                 body_end = self.line_base + current.body[-1].end_lineno
-                if len(current.orelse) == 1 and isinstance(current.orelse[0], ast.If):
+                if (len(current.orelse) == 1
+                        and isinstance(current.orelse[0], ast.If)):
                     current = current.orelse[0]
                     headers.append(self.comments_before(
                         self.line_base + current.lineno, body_end))
@@ -631,7 +634,8 @@ class Analyser:
                 _, sig, fname = base
                 self.drive_signal(sig, stmt)
                 return self.field_expr(sig, fname, stmt)
-            self.error(stmt, f'.next on a non-signal: {ast.unparse(node.value)}')
+            self.error(stmt, '.next on a non-signal: '
+                       + ast.unparse(node.value))
         if (isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Attribute)
                 and node.value.attr == 'next'):
@@ -718,13 +722,15 @@ class Analyser:
     def constant_or_none (self, node, scope):
         try:
             names = {k: v for k, v in scope.names.items()
-                     if isinstance(v, (int, bool)) and not isinstance(v, Signal)}
+                     if isinstance(v, (int, bool))
+                     and not isinstance(v, Signal)}
             for k, v in scope.locals.items():
                 if v[0] == 'const':
                     names[k] = v[1]
             code = compile(ast.Expression(body = node), '<const>', 'eval')
             value = eval(code, {'__builtins__': {'len': len, 'max': max,
-                                                 'min': min, 'int': int}}, names)
+                                                 'min': min,
+                                                 'int': int}}, names)
         except Exception:
             return None
         if isinstance(value, bool):
@@ -781,7 +787,8 @@ class Analyser:
             if isinstance(obj, Signal):
                 name = self.name_of(obj)
                 self.read.add(name)
-                return ir.Expr('ref', obj.width, kind_signed(obj), value = name)
+                return ir.Expr('ref', obj.width, kind_signed(obj),
+                               value = name)
             if isinstance(obj, tuple) and obj[0] == 'field':
                 _, sig, fname = obj
                 self.read.add(self.name_of(sig))
@@ -799,13 +806,15 @@ class Analyser:
             if isinstance(obj, tuple) and obj[0] == 'local':
                 _, name, kind, *rest = obj
                 if kind == 'index':
-                    return ir.Expr('ref', max(1, rest[1].bit_length()), value = name)
+                    return ir.Expr('ref', max(1, rest[1].bit_length()),
+                                   value = name)
                 if kind == 'vector':
                     return ir.Expr('ref', rest[0], value = name)
                 if kind == 'param':
                     return ir.Expr('ref', rest[0], rest[1], value = name)
                 if kind == 'const':
-                    return ir.Expr('const', min_width(rest[0]), value = rest[0])
+                    return ir.Expr('const', min_width(rest[0]),
+                                   value = rest[0])
             self.error(node, f'unknown name {ast.unparse(node)}')
         if isinstance(node, ast.Subscript):
             return self.subscript(node, scope)
@@ -857,7 +866,8 @@ class Analyser:
             a = self.expression(node.body, scope)
             b = self.expression(node.orelse, scope)
             a, b = self.context(a, b, node)
-            return ir.Expr('ifexp', max(a.width, b.width), a.signed and b.signed,
+            return ir.Expr('ifexp', max(a.width, b.width),
+                           a.signed and b.signed,
                            [cond, a, b])
         if isinstance(node, ast.Call):
             return self.call(node, scope)
@@ -867,12 +877,14 @@ class Analyser:
         """Give an unsized constant the width of its partner (4.2)."""
         if a.op == 'const' and b.op != 'const':
             if min_width(a.value) > b.width:
-                self.error(node, f'constant {a.value} wider than {b.width}-bit '
+                self.error(node, f'constant {a.value} wider than '
+                           f'{b.width}-bit '
                            'operand')
             a.width = b.width
         elif b.op == 'const' and a.op != 'const':
             if min_width(b.value) > a.width:
-                self.error(node, f'constant {b.value} wider than {a.width}-bit '
+                self.error(node, f'constant {b.value} wider than '
+                           f'{a.width}-bit '
                            'operand')
             b.width = a.width
         return a, b
@@ -917,7 +929,8 @@ class Analyser:
         if left.op == 'const' and right.op == 'const':
             v = {'&': left.value & right.value, '|': left.value | right.value,
                  '^': left.value ^ right.value, '+': left.value + right.value,
-                 '-': left.value - right.value, '*': left.value * right.value}[op]
+                 '-': left.value - right.value,
+                 '*': left.value * right.value}[op]
             return ir.Expr('const', min_width(v), v < 0, value = v)
         # * is a scale (part-select index): a constant need not fit in
         # the other operand. & | ^ + - share a width, so context applies.
@@ -925,8 +938,10 @@ class Analyser:
             left, right = self.context(left, right, node)
         signed = left.signed and right.signed
         if op in ('&', '|', '^'):
-            if left.width != right.width and 1 not in (left.width, right.width):
-                self.warnings.append(f'{self.current}: {op} on {left.width} and '
+            if (left.width != right.width
+                    and 1 not in (left.width, right.width)):
+                self.warnings.append(f'{self.current}: {op} on '
+                                     f'{left.width} and '
                                      f'{right.width} bits at line '
                                      f'{self.line_base + node.lineno}')
             return ir.Expr('binop', max(left.width, right.width), signed,
@@ -939,7 +954,8 @@ class Analyser:
 
     def subscript (self, node, scope):
         base_obj = self.resolve(node.value, scope, node)
-        if isinstance(base_obj, (SignalArray, list)) and not isinstance(node.slice, ast.Slice):
+        if (isinstance(base_obj, (SignalArray, list))
+                and not isinstance(node.slice, ast.Slice)):
             index = self.constant_or_none(node.slice, scope)
             if index is not None:
                 element = base_obj[index]
@@ -986,7 +1002,8 @@ class Analyser:
                 return ir.Expr('part', offset + 1, args = [base, index],
                                value = offset + 1)
         self.error(node, 'a slice with a variable bound must be '
-                   'sig[base + W-1:base] with constant W, or sig.part(base, W)')
+                   'sig[base + W-1:base] with constant W, or '
+                   'sig.part(base, W)')
 
     def call (self, node, scope):
         func = node.func
@@ -1001,7 +1018,8 @@ class Analyser:
                 name = self.name_of(base)
                 self.read.add(name)
                 return ir.Expr('part', width, args = [
-                    ir.Expr('ref', base.width, value = name), index], value = width)
+                    ir.Expr('ref', base.width, value = name), index],
+                   value = width)
             if func.attr == 'part_down' and isinstance(base, Signal):
                 index = self.expression(node.args[0], scope)
                 width = self.constant(node.args[1], scope, node)
@@ -1011,14 +1029,16 @@ class Analyser:
                     ir.Expr('ref', base.width, value = name), index],
                     value = width)
             self.error(node, f'method {func.attr} not supported')
-        target = scope.names.get(func.id) if isinstance(func, ast.Name) else None
+        target = (scope.names.get(func.id)
+                  if isinstance(func, ast.Name) else None)
         if target is concat:
             parts = [self.expression(a, scope) for a in node.args]
             for a, p in zip(node.args, parts):
                 if (p.op == 'const' and not (isinstance(a, ast.Constant)
                                              and isinstance(a.value, bool))):
                     self.warnings.append(f'{self.current}: unsized constant '
-                                         f'{p.value} in concat takes {p.width} bits')
+                                         f'{p.value} in concat takes '
+                                         f'{p.width} bits')
             return ir.Expr('concat', sum(p.width for p in parts), args = parts)
         if target is replicate:
             inner = self.expression(node.args[0], scope)
@@ -1066,7 +1086,8 @@ class Analyser:
         locals_ = {}
         rest = []
         for stmt in node.body:
-            if (isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Call)
+            if (isinstance(stmt, ast.Assign)
+                    and isinstance(stmt.value, ast.Call)
                     and isinstance(stmt.value.func, ast.Name)
                     and fscope.names.get(stmt.value.func.id) is vector):
                 width = self.constant(stmt.value.args[0], fscope, stmt)
@@ -1210,8 +1231,19 @@ class Analyser:
         walk(body, set())
 
     def check_comb_loops (self, mod):
-        """Combinational cycles (ring oscillators included). Severe
-        warning; the HDL is still emitted. Cycle sim will not settle."""
+        """Combinational cycles, ring oscillators included.
+
+        A statement in a comb process runs in order, the way a blocking
+        assignment does, so reading a signal the same process assigned
+        further up is not a loop: it is the house idiom of a legal base
+        value and then stacked overrides. Only a read that reaches back
+        past every assignment in this process depends on the outside
+        world, and only those edges can close a ring.
+
+        So `o.next = ~o` is a loop and is reported, `o.next = 0` then
+        `o.next = o | x` is not, and a cycle through two processes
+        still is. Reading a signal before this process drives it is a
+        separate check, check_rbw."""
         deps = {}
 
         def add_dep (target, reads):
@@ -1222,28 +1254,32 @@ class Analyser:
                 if n:
                     deps[t].add(n)
 
-        def walk (stmts, cond_reads):
+        def walk (stmts, cond_reads, settled):
             for s in stmts:
                 if isinstance(s, ir.Assign):
-                    add_dep(root(s.target), expr_refs(s.value) | cond_reads)
+                    reads = (expr_refs(s.value) | cond_reads) - settled
+                    add_dep(root(s.target), reads)
+                    settled.add(str(root(s.target)).split('[')[0])
                 elif isinstance(s, ir.If):
                     for cond, body in s.branches:
                         extra = set(cond_reads)
                         if cond is not None:
                             extra |= expr_refs(cond)
-                        walk(body, extra)
+                        walk(body, extra, settled)
                 elif isinstance(s, ir.Match):
                     extra = cond_reads | expr_refs(s.subject)
                     for _, body in s.arms:
-                        walk(body, extra)
+                        walk(body, extra, settled)
                 elif isinstance(s, ir.For):
-                    walk(s.body, cond_reads)
+                    walk(s.body, cond_reads, settled)
 
+        # a continuous assignment is its own scope and has no order to
+        # hide behind: assign(o, lambda: o | x) really is a loop
         for a in mod.assigns:
             add_dep(root(a.target), expr_refs(a.value))
         for p in mod.processes:
             if p.kind == 'comb':
-                walk(p.body, set())
+                walk(p.body, set(), set())
 
         graph = {}
         for write, reads in deps.items():
@@ -1253,7 +1289,8 @@ class Analyser:
             self.warnings.append(
                 'severe: combinational loop: '
                 + ' -> '.join(cycle)
-                + ' (cycle sim will not settle; HDL still emitted)')
+                + ' (no simulator settles this, and no fitter can '
+                'build it)')
 
     def check_unused (self, mod):
         """Unused signals and ports are warnings (SPEC 4.7)."""
@@ -1404,10 +1441,12 @@ def source_comments (func):
             lines = inspect.getsourcelines(func)[0]
             base = func.__code__.co_firstlineno - 1
             import io
-            tokens = list(tokenize.generate_tokens(io.StringIO(''.join(lines)).readline))
+            stream = io.StringIO(''.join(lines))
+            tokens = list(tokenize.generate_tokens(stream.readline))
             for t in tokens:
                 if t.type == tokenize.COMMENT:
-                    comments[base + t.start[0]] = (t.line.strip().startswith('#'),
+                    full = t.line.strip().startswith('#')
+                    comments[base + t.start[0]] = (full,
                                                    t.string)
             return comments
         except Exception:
@@ -1432,9 +1471,40 @@ def header_comment (func):
     return inspect.cleandoc(text) if text else ''
 
 
-def analyse (elaborated):
+FATAL_SEVERE = ('latch:', 'combinational loop:')
+
+
+def fatal_warnings (warnings):
+    """The severe warnings that stop the run.
+
+    An inferred latch and a combinational loop are design errors, not
+    style. The Python and C99 simulators hold the previous value across
+    a missing path, so a design with a latch passes its bench and fails
+    in silicon, which is the MyHDL wound this project is a reaction to.
+    A loop settles in no simulator and builds in no fitter.
+
+    An asynchronous reset is severe and is deliberately not fatal.
+    always_ff_async_reset is the construct you have to call out on
+    purpose, and its warning carries the reason you gave into the
+    emitted HDL. Making it stop the run would mean the only way to
+    write a reset synchroniser is a flag that also switches off the
+    other two checks."""
+    out = []
+    for w in warnings:
+        if 'severe:' not in w:
+            continue
+        body = w.split('severe:', 1)[1]
+        if any(mark in body for mark in FATAL_SEVERE):
+            out.append(w)
+    return out
+
+
+def analyse (elaborated, allow_severe = False):
     """IR modules for every distinct block in the hierarchy, leaves first,
-    and the warnings gathered."""
+    and the warnings gathered.
+
+    A fatal severe warning raises unless allow_severe is set, which is
+    what --allow-severe passes for someone mid-refactor."""
     modules, warnings = [], []
     directions = {}
     for node in elaborated.walk():
@@ -1443,4 +1513,11 @@ def analyse (elaborated):
         directions[m.name] = {p.name: p.direction for p in m.ports}
         modules.append(m)
         warnings += [f'{node.module_name}: {w}' for w in a.warnings]
+    fatal = fatal_warnings(warnings)
+    if fatal and not allow_severe:
+        listed = '\n  '.join(' '.join(w.split()) for w in fatal)
+        raise ConversionError(
+            'severe, and this design will not be built:\n  ' + listed
+            + '\n\nFix it, or pass --allow-severe to carry on with it '
+            'as it is.')
     return modules, warnings

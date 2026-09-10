@@ -83,7 +83,8 @@ def lint_sv (path, top = None):
     except FileNotFoundError:
         raise ConversionError('verilator not found on PATH')
     if result.returncode != 0:
-        message = (result.stderr or result.stdout or 'verilator failed').rstrip()
+        message = (result.stderr or result.stdout
+                   or 'verilator failed').rstrip()
         raise ConversionError(f'verilator lint failed for {path}:\n{message}')
     return result.stderr
 

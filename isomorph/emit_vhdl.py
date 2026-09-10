@@ -371,7 +371,8 @@ def emit_unit (m, by_name, top_name):
     lines.append('library ieee;')
     lines.append('use ieee.std_logic_1164.all;')
     lines.append('use ieee.numeric_std.all;')
-    needs_pkg = (any(p.array for p in m.ports) or any(s.array for s in m.signals)
+    needs_pkg = (any(p.array for p in m.ports)
+                 or any(s.array for s in m.signals)
                  or any(p.kind == 'struct' for p in m.ports)
                  or any(s.kind == 'struct' for s in m.signals))
     if needs_pkg:
@@ -1055,7 +1056,9 @@ def vhdl_expr (ctx, e, index = False):
         if a[0].width == 1:
             zeros = e.width - 1
             if e.signed:
-                return f'({zeros - 1} downto 0 => {inner}) & {inner}' if zeros else inner
+                if zeros:
+                    return f'({zeros - 1} downto 0 => {inner}) & {inner}'
+                return inner
             if zeros == 1:
                 return f"'0' & {inner}"
             return f'({zeros - 1} downto 0 => \'0\') & {inner}'
@@ -1146,7 +1149,8 @@ def vhdl_bit (ctx, e):
     base_t = vhdl_expr(ctx, base)
     if e.width != 1:
         # array word select
-        if idx.op == 'const' or (idx.op == 'ref' and idx.value in ctx.int_names):
+        if (idx.op == 'const'
+                or (idx.op == 'ref' and idx.value in ctx.int_names)):
             return f'{base_t}({vhdl_expr(ctx, idx, True)})'
         return f'{base_t}(to_integer({as_unsigned(ctx, idx)}))'
     if idx.op == 'const':

@@ -480,7 +480,8 @@ def map_inst_clock (inst, child, parent_clock):
     for formal, actual in inst.ports.items():
         if actual is None:
             continue
-        if getattr(actual, 'op', None) == 'ref' and actual.value == parent_clock:
+        if (getattr(actual, 'op', None) == 'ref'
+                and actual.value == parent_clock):
             if any(p.kind == 'ff' and p.clock == formal
                    for p in child.processes):
                 return formal
@@ -927,7 +928,8 @@ def c_binop (ctx, e):
         return (f'((uint64_t)({c_signed(left, a)} {op} '
                 f'{c_signed(right, b)})) & {mask_expr(w)}')
     if op == '<<':
-        return f'(({left}) << ({c_expr(ctx, b, index = True)})) & {mask_expr(w)}'
+        shift = c_expr(ctx, b, index = True)
+        return f'(({left}) << ({shift})) & {mask_expr(w)}'
     if op == '>>':
         # arithmetic when the left operand is signed
         return (f'((uint64_t)({c_signed(left, a)} >> '

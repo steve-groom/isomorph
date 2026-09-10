@@ -38,14 +38,17 @@ class Elaborated:
         for name, value in arguments.items():
             if isinstance(value, (Signal, SignalArray, Bundle, SimpleNamespace,
                                   OpenPort)) or (isinstance(value, list) and
-                                  value and isinstance(value[0], (Signal, Bundle))):
+                                  value
+                                  and isinstance(value[0],
+                                                 (Signal, Bundle))):
                 self.ports[name] = value
                 self.port_names.update(_port_names(name, value))
             elif isinstance(value, (int, bool, EnumType, StructType, str)):
                 self.parameters[name] = value
             else:
                 raise IsomorphError(f'{self.block_name}: argument {name} is '
-                                    f'neither a port nor a parameter: {value!r}')
+                                    'neither a port nor a parameter: '
+                                    f'{value!r}')
         port_ids = set()
         for value in self.ports.values():
             for element in _leaf_signals(value):
@@ -74,7 +77,8 @@ class Elaborated:
                 self.instances[name] = value
             elif isinstance(value, bool) or isinstance(value, int):
                 self.constants[name] = value
-            elif isinstance(value, FunctionType) and not isinstance(value, Process):
+            elif (isinstance(value, FunctionType)
+                    and not isinstance(value, Process)):
                 self.functions[name] = value
             elif isinstance(value, (tuple, list)):
                 for index, element in enumerate(value):

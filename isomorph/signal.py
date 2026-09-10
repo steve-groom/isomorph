@@ -158,7 +158,8 @@ def signal (width = 1, reset = None):
     if isinstance(width, StructType):
         return Signal(width.width, kind = 'struct', type = width)
     if not isinstance(width, int) or width < 1:
-        raise IsomorphError(f'signal width must be a positive int, not {width!r}')
+        raise IsomorphError('signal width must be a positive int, '
+                            f'not {width!r}')
     return Signal(width, reset, 'bit' if width == 1 else 'vector')
 
 

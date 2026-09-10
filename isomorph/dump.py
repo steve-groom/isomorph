@@ -6,10 +6,12 @@ from . import ir
 def dump_module (m):
     out = [f'module {m.name} (block {m.block})']
     if m.parameters:
-        out.append('  parameters: ' + ', '.join(f'{k} = {v!r}' for k, v in m.parameters.items()))
+        shown = ', '.join(f'{k} = {v!r}' for k, v in m.parameters.items())
+        out.append('  parameters: ' + shown)
     for p in m.ports:
         arr = f' [{p.array}]' if p.array else ''
-        out.append(f'  port {p.direction:3} {p.name} [{p.width}]{arr} {p.kind}')
+        out.append(f'  port {p.direction:3} {p.name} '
+                   f'[{p.width}]{arr} {p.kind}')
     for name, e in m.enums.items():
         out.append(f'  enum {name} [{e.width}] ' + ', '.join(
             f'{x.name}={x.value}' for x in e.members))
@@ -39,7 +41,8 @@ def dump_module (m):
     for i in m.instances:
         out.append(f'  instance {i.name} : {i.module}')
         for formal, actual in i.ports.items():
-            out.append(f'    .{formal} ({ir.render(actual) if actual else "open"})')
+            shown = ir.render(actual) if actual else 'open'
+            out.append(f'    .{formal} ({shown})')
     return '\n'.join(out)
 
 
@@ -53,7 +56,8 @@ def stmts (body, indent):
         if isinstance(s, ir.Comment):
             out.append(f'{pad}{s.text}')
         elif isinstance(s, ir.Assign):
-            out.append(f'{pad}{ir.render(s.target)} = {ir.render(s.value)}{tail}')
+            out.append(f'{pad}{ir.render(s.target)} = '
+                       f'{ir.render(s.value)}{tail}')
         elif isinstance(s, ir.If):
             first = True
             headers = getattr(s, 'branch_comments', [])

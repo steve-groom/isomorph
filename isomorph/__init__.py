@@ -6,7 +6,7 @@ from .signal import (signal, signals, vector, enum, struct, interface,
     interfaces, attr, open_port, concat, replicate, bits, always_comb,
     always_ff, always_ff_async_reset, assign, instances, IsomorphError)
 from .elaborate import block, Elaborated
-from .analyse import analyse, ConversionError
+from .analyse import analyse, fatal_warnings, ConversionError
 from .dump import dump
 from .emit_sv import emit_sv, write_sv, lint_sv
 from .emit_vhdl import emit_vhdl, write_vhdl, lint_vhdl
@@ -36,7 +36,8 @@ def _argv_value (flag, default = None):
     return default
 
 
-def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None):
+def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
+             allow_severe = None):
     """Analyse a block. Dump the IR with dump_ir / --dump.
 
     Default: write build/<top>.sv and print the path.
@@ -44,10 +45,20 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None):
     vhdl / --vhdl: VHDL-2008 (path or default).
     c99 / --c99: cycle-accurate C99 smoke (.c and .h).
     --lint runs verilator and/or ghdl.
+
+    An inferred latch or a combinational loop stops the conversion.
+    allow_severe / --allow-severe carries on with it anyway and says
+    what it allowed.
     """
     if not isinstance(top, Elaborated):
         raise IsomorphError('convert() takes an elaborated block instance')
-    modules, warnings = analyse(top)
+    if allow_severe is None:
+        allow_severe = _argv_has('--allow-severe')
+    modules, warnings = analyse(top, allow_severe)
+    if allow_severe:
+        for w in fatal_warnings(warnings):
+            text = ' '.join(w.replace('severe:', '', 1).split())
+            print('allowed severe:', text, file = sys.stderr)
     dumping = dump_ir or _argv_has('--dump')
     if dumping:
         print(dump(modules, warnings))

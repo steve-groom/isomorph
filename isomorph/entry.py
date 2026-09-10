@@ -46,6 +46,10 @@ write
   --c99 [FILE]     C99 sources (.c, .h, _vcd.c)
   --lint           check what was written with verilator and ghdl
   --dump           print the IR instead of writing
+  --allow-severe   carry on with an inferred latch or a combinational
+                   loop instead of stopping. Neither can be built, so
+                   this is for a refactor in progress and never for a
+                   design you intend to keep
   -o DIR           output directory, default build/
 
   -h, --help       this text
@@ -67,6 +71,7 @@ class Options:
         self.c99 = None
         self.lint = False
         self.dump = False
+        self.allow_severe = False
         self.outdir = 'build'
         self.help = False
 
@@ -111,6 +116,8 @@ def parse (args, prog = 'design.py'):
             opts.vhdl = value('--vhdl')
         elif arg == '--c99':
             opts.c99 = value('--c99')
+        elif arg == '--allow-severe':
+            opts.allow_severe = True
         elif arg == '--lint':
             opts.lint = True
         elif arg == '--dump':
@@ -170,7 +177,8 @@ def run_test (elaborate, test, opts, prog):
     if not isinstance(top, Elaborated):
         raise IsomorphError(f'{prog}: the elaborate function must return '
                             'an elaborated block')
-    sim = Simulator(top, backend = opts.backend)
+    sim = Simulator(top, backend = opts.backend,
+                    allow_severe = opts.allow_severe)
     vcd_path = None
     if opts.vcd:
         if opts.vcd is True:
@@ -208,7 +216,9 @@ def main (elaborate, test = None, argv = None, prog = None):
     try:
         if opts.writing:
             saved = sys.argv
-            sys.argv = [prog] + (['--lint'] if opts.lint else []) \
+            sys.argv = [prog] \
+                + (['--allow-severe'] if opts.allow_severe else []) \
+                + (['--lint'] if opts.lint else []) \
                 + ['-o', opts.outdir]
             try:
                 convert(elaborate(),

@@ -26,11 +26,15 @@ class Simulator:
     add_clock(period) stores VCD display time only. Not STA.
     """
 
-    def __init__ (self, top, backend = 'python', workdir = None):
+    def __init__ (self, top, backend = 'python', workdir = None,
+                  allow_severe = False):
         if not isinstance(top, Elaborated):
             raise IsomorphError('Simulator() takes an elaborated block')
         self.elaborated = top
-        self.modules, self.warnings = analyse(top)
+        # a latch or a loop stops here too: a simulator that runs a
+        # design the fitter would refuse is the gap this project exists
+        # to close
+        self.modules, self.warnings = analyse(top, allow_severe)
         self.backend = backend
         self.by_name = {m.name: m for m in self.modules}
         self.top = self.modules[-1]
@@ -406,7 +410,8 @@ class C99Backend:
         val = getattr(obj, base)
         if idx is not None:
             return int(val[idx])
-        if isinstance(val, (list, tuple)) or hasattr(val, '__len__') and not isinstance(val, int):
+        if (isinstance(val, (list, tuple))
+                or (hasattr(val, '__len__') and not isinstance(val, int))):
             try:
                 return [int(val[i]) for i in range(len(val))]
             except TypeError:

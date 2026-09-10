@@ -39,7 +39,8 @@ class Wishbone (Check):
             self.fail(sim, 'WB-X02', 'err without cyc')
         if rty and not cyc:
             self.fail(sim, 'WB-X02', 'rty without cyc')
-        if self.prev.get('stb') and self.prev.get('cyc') and not self.prev.get('ack'):
+        if (self.prev.get('stb') and self.prev.get('cyc')
+                and not self.prev.get('ack')):
             for key, val in (('adr', adr), ('we', we), ('dat_w', dat_w),
                              ('sel', sel), ('stb', stb), ('cyc', cyc)):
                 if val is None:

@@ -249,7 +249,8 @@ class VerilatorBackend:
             return value & ((1 << width) - 1)
         value = 0
         for word in range((width + 31) // 32):
-            value |= (int(self.lib.iso_get(idx, word)) & 0xffffffff) << (32 * word)
+            part = int(self.lib.iso_get(idx, word)) & 0xffffffff
+            value |= part << (32 * word)
         return value & ((1 << width) - 1)
 
     def set (self, path, value):
