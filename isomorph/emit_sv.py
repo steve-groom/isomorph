@@ -5,6 +5,7 @@ first), named processes, named functions, named instances, comments on
 the same items. Section 4 of SPEC.txt is the reference."""
 import re
 import textwrap
+import dataclasses
 import os
 import subprocess
 
@@ -44,6 +45,59 @@ def fit_comment (line, indent, marker):
 
 
 
+def body_key (m):
+    """What the module is, with its name and parameter values taken out.
+
+    Two builds of one block that agree on this are the same module. A
+    parameter isomorph folded into the body - a width, a counter limit,
+    a rate turned into a number of clocks - changes it and they differ.
+    One that survived as a real parameter does not, and the difference
+    belongs at the instance."""
+    return repr(dataclasses.replace(m, name = '', parameters = {}))
+
+
+def merge_builds (modules):
+    """One module per distinct body, and what each build must override.
+
+    Returns the modules to emit and a map from the name a build had to
+    the name it is emitted under together with the parameter values
+    that build needs. A block instantiated twice with a different
+    VERSION was two modules with two names for a body that is the same
+    text either way; it is one module and one override now.
+    """
+    first = {}
+    keep = []
+    rename = {}
+    for m in modules:
+        key = (m.block, body_key(m))
+        chosen = first.get(key)
+        if chosen is None:
+            first[key] = m
+            keep.append(m)
+            rename[m.name] = (m.name, {})
+            continue
+        override = {name: value for name, value in m.parameters.items()
+                    if chosen.parameters.get(name) != value}
+        rename[m.name] = (chosen.name, override)
+
+    # merging can leave one build of a block where there were several,
+    # and then it is called what it is. The elaborator could not know:
+    # it does not have the bodies to compare
+    survivors = {}
+    for m in keep:
+        survivors.setdefault(m.block, []).append(m)
+    plain = {}
+    for block, group in survivors.items():
+        if len(group) == 1 and group[0].name != block:
+            plain[group[0].name] = block
+    if plain:
+        keep = [dataclasses.replace(m, name = plain.get(m.name, m.name))
+                for m in keep]
+        rename = {was: (plain.get(now, now), over)
+                  for was, (now, over) in rename.items()}
+    return keep, rename
+
+
 def emit_sv (modules):
     """SystemVerilog text for the module list, leaves first.
 
@@ -51,6 +105,8 @@ def emit_sv (modules):
     column 79 goes between them: with each module carrying its own
     header comment there is otherwise nothing to say where one ends
     and the next begins."""
+    modules, rename = merge_builds(modules)
+    modules = [retarget(m, rename) for m in modules]
     chunks = []
     preamble = struct_typedefs(modules)
     if preamble:
@@ -58,6 +114,69 @@ def emit_sv (modules):
     chunks += [BAR_SV + '\n' + emit_module(m) for m in modules]
     text = '\n\n'.join(chunks)
     return text + ('\n' if not text.endswith('\n') else '')
+
+
+def retarget (m, rename):
+    """Point every instance at the module its build was merged into."""
+    if not any(i.module in rename and rename[i.module][0] != i.module
+               or rename.get(i.module, ('', {}))[1]
+               for i in m.instances):
+        return m
+    out = []
+    for inst in m.instances:
+        name, override = rename.get(inst.module, (inst.module, {}))
+        out.append(dataclasses.replace(inst, module = name,
+                                       params = dict(override)))
+    return dataclasses.replace(m, instances = out)
+
+
+def sv_files (modules):
+    """One file per module, in dependency order, leaves first.
+
+    What a person writing SystemVerilog by hand would produce, and what
+    a vendor tool wants to be handed: a file per module and a list of
+    them. Anything the modules share - struct typedefs - goes in a
+    header each of them includes.
+
+    Returns [(filename, text)], the header first if there is one.
+    """
+    modules, rename = merge_builds(modules)
+    modules = [retarget(m, rename) for m in modules]
+    top = modules[-1].name
+    out = []
+    shared = struct_typedefs(modules)
+    header = f'{top}_types.svh' if shared else None
+    if header:
+        guard = header.replace('.', '_').upper()
+        out.append((header, f'`ifndef {guard}\n`define {guard}\n\n'
+                    + shared + f'\n`endif\n'))
+    for m in modules:
+        text = emit_module(m)
+        if header:
+            text = f'`include "{header}"\n\n' + text
+        out.append((m.name + '.sv', text + '\n'))
+    return out
+
+
+def write_sv_files (modules, directory, listing = True):
+    """Write one file per module into `directory`, and a .f list of
+    them in the order a tool should read them."""
+    os.makedirs(directory, exist_ok = True)
+    written = []
+    for name, text in sv_files(modules):
+        path = os.path.join(directory, name)
+        with open(path, 'w', encoding = 'ascii', newline = '\n') as f:
+            f.write(text)
+        written.append(path)
+    if listing:
+        top = os.path.basename(directory)
+        listing_path = os.path.join(directory, top + '.f')
+        with open(listing_path, 'w', encoding = 'ascii',
+                  newline = '\n') as f:
+            for path in written:
+                f.write(os.path.basename(path) + '\n')
+        written.append(listing_path)
+    return written
 
 
 def write_sv (modules, path):
@@ -89,7 +208,7 @@ def lint_sv (path, top = None):
            '-Wno-PINCONNECTEMPTY']
     if top:
         cmd += ['--top-module', top]
-    cmd.append(path)
+    cmd += [path] if isinstance(path, str) else list(path)
     try:
         result = subprocess.run(cmd, capture_output = True, text = True)
     except FileNotFoundError:
@@ -634,7 +753,12 @@ def item_lines (m):
 def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
     formals = list(inst.ports.items())
-    lines.append(f'    {inst.module} {inst.name} (')
+    if inst.params:
+        values = ', '.join(f'.{n}({int(v)})'
+                           for n, v in sorted(inst.params.items()))
+        lines.append(f'    {inst.module} #({values}) {inst.name} (')
+    else:
+        lines.append(f'    {inst.module} {inst.name} (')
     for i, (formal, actual) in enumerate(formals):
         comma = ',' if i < len(formals) - 1 else ''
         mapped = sv_expr(actual) if actual is not None else ''

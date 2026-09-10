@@ -1353,20 +1353,51 @@ class Analyser:
                 'build it)')
 
     def check_unused (self, mod):
-        """Unused signals and ports are warnings (SPEC 4.7)."""
-        used = set()
-        for name in self.read:
-            used.add(name.split('[')[0])
-        for name in self.driven:
-            used.add(name.split('[')[0])
+        """Every name that is not connected at both ends (SPEC 4.7).
+
+        There are three ways a name can be wrong and this used to
+        catch one of them. It asked whether a name was read or driven,
+        so a signal read by something and driven by nothing - a
+        floating input, the worst of the three, because it simulates as
+        zero and builds as whatever the fitter leaves - counted as used
+        and was never mentioned. So did a signal driven by something
+        and read by nothing, which is logic that reaches no pin.
+
+        An input port is driven from outside and an output port is read
+        from outside, so neither is judged on the half that happens
+        somewhere else.
+        """
+        read = {name.split('[')[0] for name in self.read}
+        driven = {name.split('[')[0] for name in self.driven}
+
         for p in mod.ports:
-            if p.name.split('[')[0] not in used:
-                if not p.attributes.get('unused'):
-                    self.warnings.append(f'unused port {p.name}')
+            if p.attributes.get('unused'):
+                continue
+            base = p.name.split('[')[0]
+            if base not in read and base not in driven:
+                self.warnings.append(f'unused port {p.name}')
+            elif p.direction == 'out' and base not in driven:
+                self.warnings.append(
+                    f'undriven output {p.name}: nothing in here drives '
+                    'it, so it leaves the block floating')
+
         for s in mod.signals:
-            if s.name.split('[')[0] not in used:
-                if not s.attributes.get('unused'):
-                    self.warnings.append(f'unused signal {s.name}')
+            if s.attributes.get('unused'):
+                continue
+            base = s.name.split('[')[0]
+            if base not in read and base not in driven:
+                self.warnings.append(f'unused signal {s.name}')
+            elif base not in driven and s.init is None:
+                # a memory filled by preload() is driven by that: the
+                # contents are a declaration initialiser in the HDL and
+                # what a configured block RAM comes up holding
+                self.warnings.append(
+                    f'undriven signal {s.name}: something reads it and '
+                    'nothing drives it')
+            elif base not in read:
+                self.warnings.append(
+                    f'unread signal {s.name}: something drives it and '
+                    'nothing reads it')
 
 
 def root (expr):

@@ -18,6 +18,7 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError
+from .emit_sv import merge_builds, retarget
 from . import reserved
 
 
@@ -61,6 +62,11 @@ def emit_vhdl (modules):
     otherwise nothing to say where one ends and the next begins."""
     if not modules:
         return ''
+    # two builds of one block whose bodies are the same text are one
+    # entity, and the difference goes in the generic map. See
+    # merge_builds in emit_sv
+    modules, rename = merge_builds(modules)
+    modules = [retarget(m, rename) for m in modules]
     for m in modules:
         check_names(m)
     by_name = {m.name: m for m in modules}
@@ -75,6 +81,45 @@ def emit_vhdl (modules):
     return text + ('\n' if not text.endswith('\n') else '')
 
 
+def vhdl_files (modules):
+    """One file per design unit, in the order ghdl must analyse them:
+    the package first, then the entities leaves first."""
+    modules, rename = merge_builds(modules)
+    modules = [retarget(m, rename) for m in modules]
+    for m in modules:
+        check_names(m)
+    by_name = {m.name: m for m in modules}
+    top = modules[-1].name
+    out = []
+    pkg = emit_package(modules)
+    if pkg:
+        out.append((f'{top}_pkg.vhd', pkg + '\n'))
+    for m in modules:
+        out.append((m.name + '.vhd', emit_unit(m, by_name, top) + '\n'))
+    return out
+
+
+def write_vhdl_files (modules, directory, listing = True):
+    """Write one file per design unit into `directory`, and a .f list
+    of them in analysis order."""
+    os.makedirs(directory, exist_ok = True)
+    written = []
+    for name, text in vhdl_files(modules):
+        path = os.path.join(directory, name)
+        with open(path, 'w', encoding = 'ascii', newline = '\n') as f:
+            f.write(text)
+        written.append(path)
+    if listing:
+        top = os.path.basename(directory)
+        listing_path = os.path.join(directory, top + '_vhdl.f')
+        with open(listing_path, 'w', encoding = 'ascii',
+                  newline = '\n') as f:
+            for path in written:
+                f.write(os.path.basename(path) + '\n')
+        written.append(listing_path)
+    return written
+
+
 def write_vhdl (modules, path):
     directory = os.path.dirname(os.path.abspath(path))
     if directory:
@@ -87,7 +132,8 @@ def write_vhdl (modules, path):
 def lint_vhdl (path):
     """ghdl -a --std=08. Raises ConversionError on failure."""
     workdir = tempfile.mkdtemp(prefix = 'iso_ghdl_')
-    cmd = ['ghdl', '-a', '--std=08', '--workdir=' + workdir, path]
+    paths = [path] if isinstance(path, str) else list(path)
+    cmd = ['ghdl', '-a', '--std=08', '--workdir=' + workdir] + paths
     try:
         result = subprocess.run(cmd, capture_output = True, text = True)
     except FileNotFoundError:
@@ -730,7 +776,9 @@ def instance_lines (ctx, inst):
     lines.append(f'  {inst.name} : entity work.{inst.module}')
     child = ctx.by_name.get(inst.module)
     if child is not None:
-        gens = [(n, v) for n, v in child.parameters.items()
+        values = dict(child.parameters)
+        values.update(inst.params)
+        gens = [(n, v) for n, v in values.items()
                 if isinstance(v, int) and not isinstance(v, bool)]
         if gens:
             lines.append('    generic map (')

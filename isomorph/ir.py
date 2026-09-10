@@ -156,6 +156,7 @@ class Instance:
     ports: dict                # formal -> Expr (ref) or None for open
     line: int = 0
     comments: list = field(default_factory = list)
+    params: dict = field(default_factory = dict)   # overrides, if any
 
 
 @dataclass

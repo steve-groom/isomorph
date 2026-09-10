@@ -8,8 +8,9 @@ from .signal import (signal, signals, vector, enum, struct,
 from .elaborate import block, Elaborated
 from .analyse import analyse, fatal_warnings, ConversionError
 from .dump import dump
-from .emit_sv import emit_sv, write_sv, lint_sv
-from .emit_vhdl import emit_vhdl, write_vhdl, lint_vhdl
+from .emit_sv import emit_sv, write_sv, write_sv_files, lint_sv
+from .emit_vhdl import (emit_vhdl, write_vhdl, write_vhdl_files,
+                        lint_vhdl)
 from .emit_c99 import emit_c99, write_c99
 from .sidecar import sidecar, write_sidecar
 from .execute import SimError
@@ -29,7 +30,8 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
              json = None):
     """Analyse a block. Dump the IR with dump_ir / --dump.
 
-    Default: write build/<top>.sv and print the path.
+    Default: write build/<top>/ - one file per module and a
+    .f list of them - and print the paths.
     sv / --sv: SystemVerilog (path or default).
     vhdl / --vhdl: VHDL-2008 (path or default).
     json / --json: the intermediate form as JSON, for another tool.
@@ -99,22 +101,35 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
 
     top_name = modules[-1].name
     wrote = []
+    # a file per module and a list of them, which is what a vendor
+    # tool wants handed to it and what a person writing the HDL by
+    # hand would produce. Naming a file explicitly still puts the
+    # whole design in that one file, which is what a bench wants
     if want_sv:
         if sv_path is None:
-            os.makedirs(outdir, exist_ok = True)
-            sv_path = os.path.join(outdir, top_name + '.sv')
-        write_sv(modules, sv_path)
-        wrote.append(sv_path)
-        if lint:
-            lint_sv(sv_path, top = top_name)
+            written = write_sv_files(modules,
+                                     os.path.join(outdir, top_name))
+            wrote += written
+            if lint:
+                lint_sv([p for p in written if p.endswith('.sv')],
+                        top = top_name)
+        else:
+            write_sv(modules, sv_path)
+            wrote.append(sv_path)
+            if lint:
+                lint_sv(sv_path, top = top_name)
     if want_vhdl:
         if vhdl_path is None:
-            os.makedirs(outdir, exist_ok = True)
-            vhdl_path = os.path.join(outdir, top_name + '.vhd')
-        write_vhdl(modules, vhdl_path)
-        wrote.append(vhdl_path)
-        if lint:
-            lint_vhdl(vhdl_path)
+            written = write_vhdl_files(modules,
+                                       os.path.join(outdir, top_name))
+            wrote += written
+            if lint:
+                lint_vhdl([p for p in written if p.endswith('.vhd')])
+        else:
+            write_vhdl(modules, vhdl_path)
+            wrote.append(vhdl_path)
+            if lint:
+                lint_vhdl(vhdl_path)
     if want_c99:
         if c99_path is None:
             os.makedirs(outdir, exist_ok = True)
