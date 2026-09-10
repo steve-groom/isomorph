@@ -381,29 +381,6 @@ def eval_tick_lines (m, by_name):
     lines.append(f'    memset(s, 0, sizeof(*s));')
     for inst in m.instances:
         lines.append(f'    {inst.module}_init(&s->{inst.name});')
-    for s in m.signals:
-        if s.reset is None:
-            continue
-        try:
-            val = int(s.reset)
-        except (TypeError, ValueError):
-            continue
-        if val == 0:
-            continue
-        cid = c_id(s.name)
-        if s.array:
-            lines.append('    {')
-            lines.append('        int i;')
-            lines.append(f'        for (i = 0; i < {s.array}; i++) {{')
-            lines.append(f'            s->{cid}[i] = {val}ULL;')
-            if s.name in ff:
-                lines.append(f'            s->{cid}_nxt[i] = {val}ULL;')
-            lines.append('        }')
-            lines.append('    }')
-        else:
-            lines.append(f'    s->{cid} = {val}ULL;')
-            if s.name in ff:
-                lines.append(f'    s->{cid}_nxt = {val}ULL;')
     lines.append('}')
     lines.append('')
     lines.append(f'static void {m.name}_comb_once({m.name} *s)')
@@ -557,6 +534,17 @@ def hierarchy_clocks (m, by_name):
 
 
 def map_inst_clock (inst, child, parent_clock):
+    """The child's own name for a clock the parent drives, or None.
+
+    Matched by connection and never by name. A child is clocked on the
+    parent's edge only when one of its clock ports is really wired to
+    that parent clock. Falling back to "the child has a process on a
+    port that happens to be called the same thing" clocked every
+    a synchroniser chain in a PLL monitor on the parent's i_clock, because a
+    synchroniser's own clock port is also called i_clock, and a
+    crossing then propagated in one edge instead of two. Verilator got
+    it right and the two smoke backends did not.
+    """
     if child is None or parent_clock is None:
         return None
     for formal, actual in inst.ports.items():
@@ -567,9 +555,6 @@ def map_inst_clock (inst, child, parent_clock):
             if any(p.kind == 'ff' and p.clock == formal
                    for p in child.processes):
                 return formal
-    if any(p.kind == 'ff' and p.clock == parent_clock
-           for p in child.processes):
-        return parent_clock
     return None
 
 

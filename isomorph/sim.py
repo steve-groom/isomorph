@@ -44,7 +44,12 @@ class Simulator:
         self.time = 0
         self.cycle = 0
         self.clock_name = _default_clock(self.modules)
+        # every clock the design has, whether or not add_clock has been
+        # called for it. The guard in tick() is about the design, not
+        # about what the bench has got round to registering.
+        self.domains = hierarchy_clocks(self.top, self.by_name)
         self.clocks = {}
+        self._next_edge = {}        # per clock, when its next edge is due
         self.vcd = None
         self.traces = None
         self._vcd_wires = []
@@ -71,6 +76,9 @@ class Simulator:
         ns = max(1, int(round(float(period) / 1e-9)))
         name = self._name(clock) if clock is not None else self.clock_name
         if name is not None:
+            if self.clocks.get(name) != ns:
+                # a new or changed period restarts this clock's phase
+                self._next_edge.pop(name, None)
             self.clocks[name] = ns
         if clock is None or name == self.clock_name:
             self.period_ns = ns
@@ -175,8 +183,8 @@ class Simulator:
         """
         n = int(n)
         clk = self._name(clock) if clock is not None else None
-        if clk is None and len(self.clocks) > 1:
-            named = ', '.join(sorted(self.clocks))
+        if clk is None and len(self.domains) > 1:
+            named = ', '.join(sorted(self.domains))
             raise SimError(
                 f'{self.top.name} has more than one clock ({named}), so '
                 "tick() has to name one: tick(n, 'i_wr_clock'). To "
@@ -199,8 +207,13 @@ class Simulator:
         """Advance wall-display time, firing each add_clock domain.
 
         duration is seconds. ticks=N is sugar for tick(N) on the
-        default clock. Simultaneous edges share one NBA commit on
-        the Python backend.
+        default clock. Edges that land at the same instant take theirs
+        together, before any of them commits.
+
+        Each clock keeps its phase across calls, so run(a) then run(b)
+        is run(a + b). Restarting every clock at the moment of the call
+        meant a run shorter than a period fired nothing at all, and two
+        short runs fired nothing twice.
         """
         if ticks is not None:
             self.tick(ticks)
@@ -214,7 +227,9 @@ class Simulator:
                 clocks = {self.clock_name: self.period_ns}
             else:
                 raise SimError('run() needs add_clock()')
-        next_t = {c: self.time + p for c, p in clocks.items()}
+        for c, p in clocks.items():
+            self._next_edge.setdefault(c, self.time + p)
+        next_t = {c: self._next_edge[c] for c in clocks}
         while True:
             due = [(t, c) for c, t in next_t.items() if t <= end]
             if not due:
@@ -225,6 +240,7 @@ class Simulator:
             self._fire(group, t)
             for c in group:
                 next_t[c] += clocks[c]
+                self._next_edge[c] = next_t[c]
 
     def _fire (self, group, t):
         if self._python is not None:
@@ -405,6 +421,8 @@ class C99Backend:
             raise SimError('gcc failed:\n' + build.stderr)
         self.lib = CDLL(so_path)
         self.ctype = make_ctype(self.top, self.by_name)
+        self.widths = {p.name: p.width for p in self.top.ports}
+        self.widths.update({sig.name: sig.width for sig in self.top.signals})
         self.state = self.ctype()
         name = self.top.name
         self._init = getattr(self.lib, name + '_init')
@@ -513,12 +531,22 @@ class C99Backend:
         return int(val)
 
     def set (self, path, value):
+        """A value wider than the signal keeps its low bits.
+
+        A C struct field takes whatever fits in its own type, so
+        setting 2 on a one-bit port stored 2 here and 0 on the other
+        two backends, which is a disagreement about the bench rather
+        than about the design and just as confusing."""
         obj, base, idx = self._resolve(path)
         field = getattr(obj, base)
+        width = self.widths.get(path.split('.')[-1].split('[')[0])
+        value = int(value)
+        if width:
+            value &= (1 << width) - 1
         if idx is not None:
-            field[idx] = int(value)
+            field[idx] = value
             return
-        setattr(obj, base, int(value))
+        setattr(obj, base, value)
 
     def _resolve (self, path):
         parts = path.split('.')

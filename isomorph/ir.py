@@ -93,7 +93,6 @@ class Sig:
     name: str
     width: int
     kind: str                  # bit, vector, enum, struct
-    reset: object = None
     type: object = None
     attributes: dict = field(default_factory = dict)
     array: int = 0             # element count if an array

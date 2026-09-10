@@ -6,7 +6,7 @@ from ..signal import signal
 
 def uart ():
     return SimpleNamespace(
-        txd = signal(reset = True),
-        oe = signal(reset = True),
-        rxd = signal(reset = True),
+        txd = signal(),
+        oe = signal(),
+        rxd = signal(),
     )

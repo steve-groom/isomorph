@@ -22,8 +22,8 @@ def i2c ():
     return SimpleNamespace(
         sda_o = signal(),
         sda_oe = signal(),
-        sda_i = signal(reset = True),
+        sda_i = signal(),
         scl_o = signal(),
         scl_oe = signal(),
-        scl_i = signal(reset = True),
+        scl_i = signal(),
     )

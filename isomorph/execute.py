@@ -45,18 +45,19 @@ class Store:
         for p in module.ports:
             self._add(p.name, p.width, p.array, p.name in ff, p.kind, p.type)
         for s in module.signals:
-            self._add(s.name, s.width, s.array, s.name in ff, s.kind, s.type,
-                      reset = s.reset)
+            self._add(s.name, s.width, s.array, s.name in ff, s.kind,
+                      s.type)
         for inst in module.instances:
             child = by_name[inst.module]
             self.child[inst.name] = Store(child, by_name)
 
-    def _add (self, name, width, array, has_nxt, kind, typ, reset = None):
+    def _add (self, name, width, array, has_nxt, kind, typ):
         self.width[name] = width
         self.array[name] = array
         self.kind[name] = kind
         self.type[name] = typ
-        init = 0 if reset is None else int(reset) & mask(width)
+        # every register powers up at zero, as the emitted HDL does
+        init = 0
         if array:
             self.v[name] = [init] * array
             if has_nxt:
@@ -239,6 +240,17 @@ class Executor:
             self._posedge_store(store.child[inst.name], child_clock)
 
     def _map_clock (self, store, inst, parent_clock):
+        """The child's own name for a clock the parent drives, or None.
+
+        Matched by connection and never by name. A child is clocked on
+        the parent's edge only when one of its clock ports is really
+        wired to that parent clock. Falling back to "the child has a
+        process on a port that happens to be called the same thing"
+        clocked every a synchroniser chain in a PLL monitor on the parent's
+        i_clock, because a synchroniser's own clock port is also called
+        i_clock, and a crossing then propagated in one edge instead of
+        two. Verilator got it right and the two smoke backends did not.
+        """
         child = store.child[inst.name]
         for formal, actual in inst.ports.items():
             if actual is None:
@@ -248,9 +260,6 @@ class Executor:
                 if any(p.kind == 'ff' and p.clock == formal
                        for p in child.m.processes):
                     return formal
-        if any(p.kind == 'ff' and p.clock == parent_clock
-               for p in child.m.processes):
-            return parent_clock
         return None
 
     def _commit_store (self, store, clock):

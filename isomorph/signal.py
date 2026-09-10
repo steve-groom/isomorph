@@ -116,9 +116,16 @@ def interface (name, **roles):
 
 
 class Signal:
-    """signal(), signal(W), signal(W, reset = True), signal(enum_type),
-    signal(struct_type). The name is filled in at elaboration from the
-    variable that holds it.
+    """signal(), signal(W), signal(enum_type), signal(struct_type).
+    The name is filled in at elaboration from the variable that holds
+    it.
+
+    There is no declared power-on value. Isomorph emits none, by
+    design, so a register holds whatever it comes up with until
+    something writes it, and a simulator that quietly started it
+    somewhere else would be telling you about a design you are not
+    going to get. A value you need at power-on is assigned in the reset
+    branch, or the state machine walks to it from wherever it starts.
 
     Arithmetic on a signal is modular, as it is in SystemVerilog: a
     value assigned to a signal is the low bits of what was computed.
@@ -126,10 +133,8 @@ class Signal:
     because the width rules already make you say where a carry goes:
     (count + 1)[7:0] is the only way to write it."""
 
-    def __init__ (self, width = 1, reset = None, kind = 'vector',
-                  type = None):
+    def __init__ (self, width = 1, kind = 'vector', type = None):
         self.width = width
-        self.reset = reset
         self.kind = kind                # 'bit', 'vector', 'enum', 'struct'
         self.type = type
         self.name = None
@@ -152,15 +157,15 @@ class Signal:
         return f'signal({self.name or "?"}[{self.width}])'
 
 
-def signal (width = 1, reset = None):
+def signal (width = 1):
     if isinstance(width, EnumType):
-        return Signal(width.width, kind = 'enum', type = width, reset = reset)
+        return Signal(width.width, kind = 'enum', type = width)
     if isinstance(width, StructType):
         return Signal(width.width, kind = 'struct', type = width)
     if not isinstance(width, int) or width < 1:
         raise IsomorphError('signal width must be a positive int, '
                             f'not {width!r}')
-    return Signal(width, reset, 'bit' if width == 1 else 'vector')
+    return Signal(width, 'bit' if width == 1 else 'vector')
 
 
 class SignalArray(list):
