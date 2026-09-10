@@ -25,12 +25,14 @@ __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
 
 
 def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
-             allow_severe = False, lint = False, outdir = 'build'):
+             allow_severe = False, lint = False, outdir = 'build',
+             json = None):
     """Analyse a block. Dump the IR with dump_ir / --dump.
 
     Default: write build/<top>.sv and print the path.
     sv / --sv: SystemVerilog (path or default).
     vhdl / --vhdl: VHDL-2008 (path or default).
+    json / --json: the intermediate form as JSON, for another tool.
     c99 / --c99: cycle-accurate C99 smoke (.c and .h).
     lint runs verilator and ghdl over what was written.
     outdir is where a path that was not given by name goes.
@@ -123,10 +125,17 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
         vcd_c = os.path.splitext(c_path)[0] + '_vcd.c'
         if os.path.isfile(vcd_c):
             wrote.append(vcd_c)
-    if wrote:
-        first = os.path.abspath(wrote[0])
-        json_path = os.path.join(os.path.dirname(first),
-                                 top_name + '.iso.json')
+    # the sidecar is the intermediate form as JSON, for a tool that
+    # wants to read a design rather than build it - a pin planner, a
+    # register-map generator. Nothing in isomorph reads it, so it is
+    # written when it is asked for and not beside every conversion
+    if json is not None:
+        json_path = json
+        if json_path is True:
+            base = os.path.abspath(wrote[0]) if wrote else outdir
+            json_path = os.path.join(
+                os.path.dirname(base) if wrote else outdir,
+                top_name + '.iso.json')
         write_sidecar(modules, json_path)
         wrote.append(json_path)
     for path in wrote:

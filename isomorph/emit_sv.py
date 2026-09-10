@@ -73,9 +73,20 @@ def lint_sv (path, top = None):
     """Run verilator --lint-only -Wall. Raises ConversionError on failure.
 
     -Wno-DECLFILENAME: one file holds every module (SPEC 7), so only the
-    top name matches the filename."""
+    top name matches the filename.
+
+    -Wno-UNUSEDSIGNAL and -Wno-PINCONNECTEMPTY: isomorph makes both of
+    those checks itself, in check_unused, and says so as a warning
+    naming the port or the signal. Asking Verilator for them as well
+    bought nothing and cost a pair of lint_off comments around every
+    declaration that had been thought about, which is not what anyone
+    wants to read. The emitted SystemVerilog carries no pragmas at all
+    now; whatever a vendor tool has to say about an unused signal it
+    can say without isomorph having pre-empted it.
+    """
     cmd = ['verilator', '--lint-only', '-Wall', '--sv', '--assert',
-           '-Wno-DECLFILENAME']
+           '-Wno-DECLFILENAME', '-Wno-UNUSEDSIGNAL',
+           '-Wno-PINCONNECTEMPTY']
     if top:
         cmd += ['--top-module', top]
     cmd.append(path)
@@ -425,9 +436,6 @@ def port_lines (m):
         comma = ',' if i < len(ports) - 1 else ''
         out += comment_lines(p.comments, 4)
         out += attribute_lines(p.attributes, 4)
-        waived = p.attributes.get('unused')
-        if waived:
-            out.append('    /* verilator lint_off UNUSEDSIGNAL */')
         line = '    ' + body[i].rstrip() + comma
         if p.trailing:
             pad = ' ' * max(1, wb + 5 + 1 - len(line))
@@ -440,8 +448,6 @@ def port_lines (m):
                 out.append(line)
         else:
             out.append(line)
-        if waived:
-            out.append('    /* verilator lint_on UNUSEDSIGNAL */')
     return out
 
 
@@ -563,14 +569,10 @@ def signal_lines (m):
         name = s.name
         if s.array:
             name = f'{name} [{s.array}]'
-        if s.attributes.get('unused'):
-            lines.append('    /* verilator lint_off UNUSEDSIGNAL */')
         lines += attribute_lines(s.attributes, 4)
         tail = array_init_sv(s) if s.array and s.init else ''
         lines += trailing_lines(f'    {packed} {name}{tail};',
                                 s.trailing, 4)
-        if s.attributes.get('unused'):
-            lines.append('    /* verilator lint_on UNUSEDSIGNAL */')
     if lines:
         lines.append('')
     return lines
@@ -632,21 +634,12 @@ def item_lines (m):
 def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
     formals = list(inst.ports.items())
-    # an output the parent does not want is open_port(), which is the
-    # designer saying so. Verilator flags every empty connection under
-    # -Wall, so the waiver goes with the instance that has one rather
-    # than leaving --lint to be turned off
-    open_ports = [f for f, a in formals if a is None]
-    if open_ports:
-        lines.append('    /* verilator lint_off PINCONNECTEMPTY */')
     lines.append(f'    {inst.module} {inst.name} (')
     for i, (formal, actual) in enumerate(formals):
         comma = ',' if i < len(formals) - 1 else ''
         mapped = sv_expr(actual) if actual is not None else ''
         lines.append(f'        .{formal}({mapped}){comma}')
     lines.append('    );')
-    if open_ports:
-        lines.append('    /* verilator lint_on PINCONNECTEMPTY */')
     return lines
 
 

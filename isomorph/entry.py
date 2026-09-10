@@ -46,6 +46,8 @@ write
   --sv [FILE]      SystemVerilog
   --vhdl [FILE]    VHDL-2008
   --c99 [FILE]     C99 sources (.c, .h, _vcd.c)
+  --json [FILE]    the design as JSON, for a tool that wants to read it
+                   rather than build it. Nothing in isomorph reads it
   --lint           check what was written with verilator and ghdl
   --dump           print the IR instead of writing
   --allow-severe   carry on with an inferred latch or a combinational
@@ -71,6 +73,7 @@ class Options:
         self.sv = None
         self.vhdl = None
         self.c99 = None
+        self.json = None
         self.lint = False
         self.dump = False
         self.allow_severe = False
@@ -80,7 +83,8 @@ class Options:
     @property
     def writing (self):
         return (self.sv is not None or self.vhdl is not None
-                or self.c99 is not None or self.dump)
+                or self.c99 is not None or self.json is not None
+                or self.dump)
 
 
 def parse (args, prog = 'design.py'):
@@ -118,6 +122,8 @@ def parse (args, prog = 'design.py'):
             opts.vhdl = value('--vhdl')
         elif arg == '--c99':
             opts.c99 = value('--c99')
+        elif arg == '--json':
+            opts.json = value('--json')
         elif arg == '--allow-severe':
             opts.allow_severe = True
         elif arg == '--lint':
@@ -222,6 +228,7 @@ def main (elaborate, test = None, argv = None, prog = None):
                     sv = opts.sv if opts.sv is not None else False,
                     vhdl = opts.vhdl if opts.vhdl is not None else False,
                     c99 = opts.c99 if opts.c99 is not None else False,
+                    json = opts.json,
                     allow_severe = opts.allow_severe,
                     lint = opts.lint,
                     outdir = opts.outdir)
