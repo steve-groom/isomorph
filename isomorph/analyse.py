@@ -938,6 +938,7 @@ class Analyser:
         if op != '*':
             left, right = self.context(left, right, node)
         signed = left.signed and right.signed
+        self.check_signedness(op, left, right, node)
         if op in ('&', '|', '^'):
             if (left.width != right.width
                     and 1 not in (left.width, right.width)):
@@ -952,6 +953,33 @@ class Analyser:
                            [left, right], op)
         return ir.Expr('binop', left.width + right.width, signed,
                        [left, right], op)
+
+    SIGNED_OPS = ('+', '-', '*', '<', '<=', '>', '>=')
+
+    def check_signedness (self, op, left, right, node):
+        """One operand signed and the other not.
+
+        Signedness lives at the use site, which is the right model:
+        a vector is unsigned until .signed() where it is used. It also
+        makes it easy to sign one side of a subtract or a magnitude
+        compare and not the other, and the three backends have
+        disagreed about exactly that before. A one-bit operand or a
+        constant is not worth a warning; two vectors are.
+        """
+        if op not in self.SIGNED_OPS:
+            return
+        if left.signed == right.signed:
+            return
+        if left.width == 1 or right.width == 1:
+            return
+        if 'const' in (left.op, right.op):
+            return
+        odd = 'left' if left.signed else 'right'
+        self.warnings.append(
+            f'{self.current}: {op} with only its {odd} operand signed, '
+            f'at line {self.line_base + node.lineno}. Sign both or '
+            'neither: a mixed compare is the one that is wrong in one '
+            'language and right in another.')
 
     def assert_message (self, node):
         """The text after the comma in an assert, or None.

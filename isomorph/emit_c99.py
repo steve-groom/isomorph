@@ -23,10 +23,19 @@ def mask_expr (w):
 
 
 def check_width (w, where):
+    """The C99 backend stores every value in a uint64_t.
+
+    That is the ceiling, and it is the only place the three backends
+    do not cover the same designs. A wider signal converts to
+    SystemVerilog and VHDL and runs on Verilator; it is the C99 smoke
+    build that cannot hold it."""
     if w > 64:
         raise ConversionError(
-            f'C99 smoke: {where} is {w} bits; this slice stores uint64_t '
-            f'(SPEC 6.1). Slice or split it.')
+            f'C99 smoke: {where} is {w} bits, and a C99 field is a '
+            'uint64_t (SPEC 6.1). Split the signal, or leave the C99 '
+            'backend out and run this design with --run verilator, '
+            'which has no width limit and is the design of record '
+            'anyway.')
 
 
 def emit_c99 (modules):

@@ -30,7 +30,9 @@ With no options the design's test bench runs on the Python simulator.
 run
   --run [BACKEND]  run the test bench. BACKEND is one of
                      python     IR interpreter, prints and pdb work
-                     c99        emitted C99 through gcc, fast
+                     c99        emitted C99 through gcc, fast. Every
+                                value is a uint64_t, so a design with
+                                a wider signal runs on the other two
                      verilator  emitted SystemVerilog, the reference
                    default python
   --vcd [FILE]     write a VCD of the run. Bare, it names the file

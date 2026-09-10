@@ -7,7 +7,8 @@ import sys
 from types import FunctionType, SimpleNamespace
 
 from .signal import (Signal, SignalArray, EnumType, StructType,
-    Process, Assign, Instances, OpenPort, IsomorphError, elaboration_stack)
+    Process, Assign, Instances, OpenPort, IsomorphError,
+    elaboration_stack, made_stack, note_made)
 
 
 class Elaborated:
@@ -191,10 +192,12 @@ def block (func):
                 open_ports.add(name)
                 bound.arguments[name] = Signal(value.width)
         elaboration_stack.append([])
+        made_stack.append([])
         try:
             result = func(*bound.args, **bound.kwargs)
         finally:
             assigns = elaboration_stack.pop()
+            made_stack.pop()
         if not isinstance(result, Instances):
             raise IsomorphError(f'{func.__name__} must end with '
                                 'return instances()')
@@ -202,6 +205,8 @@ def block (func):
                                 assigns)
         elaborated.open_ports = open_ports
         elaborated.line = sys._getframe(1).f_lineno
+        # the parent is the block that will have to keep hold of this
+        note_made(elaborated)
         return elaborated
     elaborate.block = func
     elaborate.is_block = True

@@ -709,13 +709,12 @@ def if_lines (node, indent, nonblocking):
     if len(node.branches) == 1 and node.branches[0][0] is None:
         return stmt_lines(node.branches[0][1], indent, nonblocking)
     pad = ' ' * indent
-    ncond = sum(1 for c, _ in node.branches if c is not None)
-    if node.unique:
-        first_kw = 'unique if'
-    elif ncond > 1:
-        first_kw = 'priority if'
-    else:
-        first_kw = 'if'
+    # unique when the analyser can prove the branches are mutually
+    # exclusive, and a plain if otherwise. priority is an assertion
+    # about the design and a direction to the synthesizer to build the
+    # chain in order, and the author did not write either of those. An
+    # if that isomorph cannot prove anything about is emitted as an if.
+    first_kw = 'unique if' if node.unique else 'if'
     lines = []
     headers = getattr(node, 'branch_comments', [])
     for i, (cond, body) in enumerate(node.branches):

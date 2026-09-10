@@ -226,6 +226,16 @@ def bits (pattern):
     raise IsomorphError('bits() is read from the AST, not executed')
 
 
+# Processes and child instances made while a block is elaborating, so
+# instances() can tell whether every one of them is still reachable.
+made_stack = []
+
+
+def note_made (thing):
+    if made_stack:
+        made_stack[-1].append(thing)
+
+
 class Process:
     def __init__ (self, kind, func, clock = None, polarity = 'pos'):
         self.kind = kind                # 'comb' or 'ff'
@@ -238,6 +248,7 @@ class Process:
         self.name = func.__name__
         self.attributes = {}
         self.line = func.__code__.co_firstlineno
+        note_made(self)
 
 
 def always_comb (func):
@@ -329,4 +340,40 @@ class Instances:
 
 
 def instances ():
-    return Instances(sys._getframe(1).f_locals)
+    """The block's locals, and a check that none of its hardware was
+    lost on the way here.
+
+    instances() reads the frame's locals, so a name rebound to
+    something else takes the first object with it and the hardware
+    quietly disappears. MyHDL had the same trap and it cost people
+    days: writing `inst = child(...)` twice, or reusing a process name
+    in a loop, removes the first one and converts without a word."""
+    frame_locals = sys._getframe(1).f_locals
+    if made_stack:
+        kept = set()
+        for value in frame_locals.values():
+            kept.add(id(value))
+            # a list of instances is the one legitimate way to hold
+            # several under one name, so look inside one
+            if isinstance(value, (list, tuple)):
+                for element in value:
+                    kept.add(id(element))
+            elif hasattr(value, '__dict__'):
+                for element in vars(value).values():
+                    kept.add(id(element))
+        lost = [t for t in made_stack[-1] if id(t) not in kept]
+        if lost:
+            what = []
+            for thing in lost:
+                kind = ('process' if isinstance(thing, Process)
+                        else 'instance')
+                where = getattr(thing, 'line', 0) or getattr(
+                    getattr(thing, 'func', None), '__name__', '?')
+                what.append(f'a {kind} made at line {where}')
+            raise IsomorphError(
+                'this block lost ' + ', '.join(what)
+                + '. instances() collects what the block\'s names still '
+                'point at, so binding a name twice throws the first one '
+                'away and the hardware goes with it. Give each process '
+                'and each instance its own name.')
+    return Instances(frame_locals)
