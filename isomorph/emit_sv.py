@@ -89,6 +89,55 @@ def lint_sv (path, top = None):
 
 
 
+def break_points (line):
+    """Every index a newline may be put at.
+
+    Both languages treat a newline as whitespace between two lexical
+    elements, so a break is legal before any token and after any open
+    bracket or comma. Inside a double-quoted string it is not."""
+    out = []
+    quoted = False
+    for index, ch in enumerate(line):
+        if ch == '"':
+            quoted = not quoted
+            continue
+        if quoted:
+            continue
+        if (ch == ' ') or (ch in '(,'):
+            out.append(index + 1)
+    return out
+
+
+def fold_line (line, indent, limit = None):
+    """One long line as several, broken only where a newline is
+    whitespace to both languages.
+
+    The generated arithmetic of a wide VHDL expression is a nest of
+    resize() calls with no whitespace to speak of, so breaking at a
+    space alone is not enough and a break after an open bracket or a
+    comma is allowed too. If no break inside the limit exists the line
+    is emitted long, which is better than one broken in the wrong
+    place."""
+    limit = HOUSE_LIMIT if limit is None else limit
+    pad = ' ' * indent
+    out = []
+    rest = line
+    while len(rest) > limit:
+        lead = len(rest) - len(rest.lstrip())
+        points = [p for p in break_points(rest) if lead < p <= limit]
+        if not points:
+            break
+        head = rest[:points[-1]].rstrip()
+        if not head.strip():
+            break
+        out.append(head)
+        rest = pad + rest[points[-1]:].lstrip()
+        if len(out) > 40:               # a pathological line; stop
+            break
+    out.append(rest)
+    return out
+
+
 def assignment_split (line):
     """Index just past the assignment arrow of a statement, or None.
 
@@ -119,8 +168,18 @@ def assignment_split (line):
     return None
 
 
+NOT_TARGETS = frozenset((
+    'if', 'elsif', 'elif', 'else', 'while', 'for', 'case', 'when',
+    'with', 'return', 'assert', 'begin', 'end', 'wait', 'until',
+    'report', 'severity'))
+
+
 def is_target (text):
-    """Does this read as the left hand side of an assignment?"""
+    """Does this read as the left hand side of an assignment?
+
+    A bracketed condition collapses to its keyword once the brackets
+    are removed, so `if ((a) = (b))` looked like an assignment to a
+    signal called `if`. A keyword is never a target."""
     out = []
     depth = 0
     for ch in text:
@@ -132,7 +191,7 @@ def is_target (text):
             out.append(ch)
     name = ''.join(out).strip()
     return bool(name) and (name[0].isalpha() or name[0] == '_') \
-        and (' ' not in name)
+        and (' ' not in name) and (name.lower() not in NOT_TARGETS)
 
 
 def wrap_long_lines (lines, marker, step):
@@ -148,17 +207,22 @@ def wrap_long_lines (lines, marker, step):
         if (len(line) <= HOUSE_LIMIT) or (marker in line):
             out.append(line)
             continue
+        lead = len(line) - len(line.lstrip())
         cut = assignment_split(line)
         if cut is None:
-            out.append(line)
+            out += fold_line(line, lead + step)
             continue
-        indent = ' ' * (len(line) - len(line.lstrip()) + step)
+        indent = ' ' * (lead + step)
         tail = indent + line[cut:].strip()
-        if len(tail) > HOUSE_LIMIT:
-            out.append(line)
-            continue
-        out.append(line[:cut].rstrip())
-        out.append(tail)
+        head = line[:cut].rstrip()
+        if len(head) <= HOUSE_LIMIT:
+            out.append(head)
+        else:
+            out += fold_line(head, lead + step)
+        if len(tail) <= HOUSE_LIMIT:
+            out.append(tail)
+        else:
+            out += fold_line(tail, lead + step + step)
     return out
 
 def emit_module (m):
@@ -254,7 +318,7 @@ def trailing_lines (line, trailing, indent):
     return comment_lines([trailing], indent) + [line]
 
 
-def width_parameter (params, width):
+def width_parameter (params, width, locals = None):
     """The name of the parameter this width came from, or None.
 
     A width is a plain int by the time it reaches the emitters, so the
@@ -264,31 +328,46 @@ def width_parameter (params, width):
     [AVMM_TIMEOUT-1:0], and in VHDL that is a generic which would resize
     them. So the value must match a parameter that is named as a width,
     and it must be the only one, or the width is emitted as a literal.
+
+    `locals` are the block's localparams. One can never be the answer,
+    because a port width cannot name something declared in the body,
+    but if one of them has the same value there is no way to tell which
+    was meant: an SPI master has SPI_WIDTH = 8 and WIDTHT = 8, and i_speed
+    is the second, not the first. So a matching localparam makes the
+    width ambiguous and it goes out as a literal.
+
     A missed substitution costs readability; a wrong one costs silence."""
     if not params or width <= 1:
         return None
-    found = [name for name, value in params.items()
-             if isinstance(value, int) and not isinstance(value, bool)
-             and value == width and 'WIDTH' in name.upper()]
+
+    def named (source):
+        return [name for name, value in (source or {}).items()
+                if isinstance(value, int) and not isinstance(value, bool)
+                and value == width and 'WIDTH' in name.upper()]
+
+    found = named(params)
     if len(found) != 1:
+        return None
+    if named(locals):
         return None
     return found[0]
 
 
-def param_hi (params, width):
+def param_hi (params, width, locals = None):
     """Keep WIDTH-1 in the HDL when the width really is that parameter."""
-    name = width_parameter(params, width)
+    name = width_parameter(params, width, locals)
     return f'{name}-1' if name else None
 
 
-def packed_type (width, kind = 'vector', typ = None, params = None):
+def packed_type (width, kind = 'vector', typ = None, params = None,
+                 locals = None):
     if kind == 'enum' and typ is not None:
         return typ.name
     if kind == 'struct' and typ is not None:
         return typ.name
     if width == 1:
         return 'logic'
-    hi = param_hi(params, width)
+    hi = param_hi(params, width, locals)
     if hi is None:
         hi = str(width - 1)
     return f'logic [{hi}:0]'
@@ -324,7 +403,8 @@ def struct_typedefs (modules):
 def port_lines (m):
     ports = m.ports
     dirs = ['input ' if p.direction == 'in' else 'output' for p in ports]
-    types = [packed_type(p.width, p.kind, p.type, m.parameters)
+    types = [packed_type(p.width, p.kind, p.type, m.parameters,
+                         m.constants)
              for p in ports]
     names = [f'{p.name} [{p.array}]' if p.array else p.name for p in ports]
     wd = max(len(d) for d in dirs)
@@ -471,7 +551,8 @@ def signal_lines (m):
     lines = []
     for s in m.signals:
         lines += comment_lines(s.comments, 4)
-        packed = packed_type(s.width, s.kind, s.type, m.parameters)
+        packed = packed_type(s.width, s.kind, s.type, m.parameters,
+                             m.constants)
         name = s.name
         if s.array:
             name = f'{name} [{s.array}]'
