@@ -7,7 +7,8 @@ from ctypes import POINTER, Structure, c_int, c_uint64, CDLL, byref
 
 from .analyse import analyse
 from .elaborate import Elaborated
-from .emit_c99 import ff_driven_names, module_clocks, write_c99
+from .emit_c99 import (ff_driven_names, module_clocks, clock_id,
+                       hierarchy_clocks, write_c99)
 from .execute import Executor, SimError, split_index
 from .signal import IsomorphError, Signal
 from .vcd import VcdWriter
@@ -370,8 +371,8 @@ class C99Backend:
         self._clock.restype = c_int
         self._tick.restype = c_int
         self._clock_by = {}
-        for clk in module_clocks(self.top):
-            fn = getattr(self.lib, f'{name}_clock_{clk}', None)
+        for clk in hierarchy_clocks(self.top, self.by_name):
+            fn = getattr(self.lib, f'{name}_clock_{clock_id(clk)}', None)
             if fn is not None:
                 fn.argtypes = [POINTER(self.ctype)]
                 fn.restype = c_int
@@ -383,10 +384,16 @@ class C99Backend:
             raise SimError(f'combinational loop in {self.top.name}')
 
     def clock (self, clock = None):
-        if clock and clock in self._clock_by:
+        if clock is None:
+            r = self._clock(byref(self.state))
+        elif clock in self._clock_by:
             r = self._clock_by[clock](byref(self.state))
         else:
-            r = self._clock(byref(self.state))
+            known = ', '.join(sorted(self._clock_by)) or 'none'
+            raise SimError(
+                f'{clock!r} is not a clock of {self.top.name}; it has '
+                f'{known}. Clocking every domain on an unknown name is '
+                'how a multi-clock design quietly passes.')
         if r != 0:
             raise SimError(f'combinational loop in {self.top.name}')
 

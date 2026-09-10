@@ -10,6 +10,7 @@ drives it. That one line gives the file a command line: run the test
 bench on any of the three simulators, write SystemVerilog, VHDL or C99,
 lint what was written, dump the IR, or print help.
 """
+import glob
 import os
 import sys
 import time
@@ -32,7 +33,11 @@ run
                      c99        emitted C99 through gcc, fast
                      verilator  emitted SystemVerilog, the reference
                    default python
-  --vcd FILE       write a VCD of the run
+  --vcd [FILE]     write a VCD of the run. Bare, it names the file
+                   after the design and the time and keeps the last
+                   two, so a run can be compared with the one before
+                   it. With a file name, that file, and nothing is
+                   removed
   --traces A,B     limit the VCD to these signals
 
 write
@@ -111,10 +116,7 @@ def parse (args, prog = 'design.py'):
         elif arg == '--dump':
             opts.dump = True
         elif arg == '--vcd':
-            if not rest:
-                raise IsomorphError('--vcd needs a file name\n\n'
-                                    + _usage(prog))
-            opts.vcd = rest.pop(0)
+            opts.vcd = value('--vcd')
         elif arg == '--traces':
             if not rest:
                 raise IsomorphError('--traces needs a signal list\n\n'
@@ -133,24 +135,59 @@ def parse (args, prog = 'design.py'):
     return opts
 
 
+KEEP_VCDS = 2
+
+
+def rotate_vcd (outdir, name, keep = KEEP_VCDS):
+    """A VCD named for the design and the time, keeping the last few.
+
+    A waveform is worth most next to the one before it: what changed
+    between the run that worked and the run that did not. So a bare
+    --vcd stamps the time into the name rather than overwriting, and
+    removes the oldest so the directory holds `keep` of them and does
+    not grow without limit.
+
+    Only files this made are considered. A VCD with a name of your own
+    is yours and is never removed."""
+    os.makedirs(outdir, exist_ok = True)
+    pattern = os.path.join(outdir, f'{name}_*.vcd')
+    existing = sorted(glob.glob(pattern), key = os.path.getmtime)
+    for stale in existing[:max(0, len(existing) - (keep - 1))]:
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(outdir, f'{name}_{stamp}.vcd')
+    if os.path.exists(path):
+        # a second run inside the same second
+        path = os.path.join(outdir, f'{name}_{stamp}_{os.getpid()}.vcd')
+    return path
+
+
 def run_test (elaborate, test, opts, prog):
     top = elaborate()
     if not isinstance(top, Elaborated):
         raise IsomorphError(f'{prog}: the elaborate function must return '
                             'an elaborated block')
     sim = Simulator(top, backend = opts.backend)
+    vcd_path = None
     if opts.vcd:
-        directory = os.path.dirname(os.path.abspath(opts.vcd))
+        if opts.vcd is True:
+            vcd_path = rotate_vcd(opts.outdir, sim.top.name)
+        else:
+            vcd_path = opts.vcd
+        directory = os.path.dirname(os.path.abspath(vcd_path))
         os.makedirs(directory, exist_ok = True)
-        sim.write_vcd(opts.vcd, traces = opts.traces)
+        sim.write_vcd(vcd_path, traces = opts.traces)
     started = time.time()
     test(sim)
     elapsed = time.time() - started
     sim.close()
     print(f'{os.path.basename(prog)}: {opts.backend} backend, '
           f'{sim.cycle} cycles, {elapsed:.2f}s, ok')
-    if opts.vcd:
-        print('wrote', os.path.abspath(opts.vcd))
+    if vcd_path:
+        print('wrote', os.path.abspath(vcd_path))
     return 0
 
 

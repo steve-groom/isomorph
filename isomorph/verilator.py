@@ -17,7 +17,7 @@ import tempfile
 from ctypes import CDLL, c_int, c_uint64
 
 from .emit_sv import write_sv
-from .emit_c99 import module_clocks
+from .emit_c99 import hierarchy_clocks
 from .execute import SimError
 
 
@@ -165,7 +165,7 @@ class VerilatorBackend:
         self.slots = port_slots(self.top)
         self.index = {n: i for n, i, _, _ in self.slots}
         self.width = {n: w for n, _, w, _ in self.slots}
-        self.clocks = module_clocks(self.top)
+        self.clocks = hierarchy_clocks(self.top, self.by_name)
         self.default_clock = self.clocks[0] if self.clocks else None
 
         sv_path = os.path.join(workdir, name + '.sv')

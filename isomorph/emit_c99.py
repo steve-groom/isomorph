@@ -82,6 +82,7 @@ def copy_runtime (directory):
 
 
 def emit_header (modules, top):
+    by_name = {m.name: m for m in modules}
     guard = top.upper() + '_H'
     lines = [
         f'#ifndef {guard}',
@@ -96,9 +97,10 @@ def emit_header (modules, top):
         lines.append(f'int {m.name}_eval({m.name} *s);')
         lines.append(f'int {m.name}_clock({m.name} *s);')
         lines.append(f'int {m.name}_tick({m.name} *s);')
-        for clk in module_clocks(m):
-            lines.append(f'int {m.name}_clock_{clk}({m.name} *s);')
-            lines.append(f'int {m.name}_tick_{clk}({m.name} *s);')
+        for clk in hierarchy_clocks(m, by_name):
+            tag = clock_id(clk)
+            lines.append(f'int {m.name}_clock_{tag}({m.name} *s);')
+            lines.append(f'int {m.name}_tick_{tag}({m.name} *s);')
         lines.append('')
     lines.append('typedef struct IsoVcd IsoVcd;')
     lines.append('typedef struct IsoLog IsoLog;')
@@ -139,6 +141,15 @@ def field_lines (name, width, array, has_nxt):
     if has_nxt:
         lines.append(f'    uint64_t {c_id(name)}_nxt;')
     return lines
+
+
+def clock_id (name):
+    """A clock name as part of a C function name.
+
+    An array element is a legal clock and a legal signal, and
+    pll0_i_clocks[0] is neither a legal C identifier nor part of one,
+    so the brackets become an underscore."""
+    return name.replace('[', '_').replace(']', '')
 
 
 def c_id (name):
@@ -372,7 +383,7 @@ def eval_tick_lines (m, by_name):
     lines.append('}')
     lines.append('')
     lines += posedge_lines(m, by_name, clock = None)
-    for clk in module_clocks(m):
+    for clk in hierarchy_clocks(m, by_name):
         lines += posedge_lines(m, by_name, clock = clk)
 
     lines.append(f'static void {m.name}_commit({m.name} *s)')
@@ -410,20 +421,21 @@ def eval_tick_lines (m, by_name):
     lines.append(f'    return {m.name}_clock(s);')
     lines.append('}')
     lines.append('')
-    for clk in module_clocks(m):
-        lines.append(f'int {m.name}_clock_{clk}({m.name} *s)')
+    for clk in hierarchy_clocks(m, by_name):
+        tag = clock_id(clk)
+        lines.append(f'int {m.name}_clock_{tag}({m.name} *s)')
         lines.append('{')
-        lines.append(f'    {m.name}_posedge_{clk}(s);')
+        lines.append(f'    {m.name}_posedge_{tag}(s);')
         lines.append(f'    {m.name}_commit(s);')
         lines.append(f'    return {m.name}_eval(s);')
         lines.append('}')
         lines.append('')
-        lines.append(f'int {m.name}_tick_{clk}({m.name} *s)')
+        lines.append(f'int {m.name}_tick_{tag}({m.name} *s)')
         lines.append('{')
         lines.append(f'    if ({m.name}_eval(s)) {{')
         lines.append('        return 1;')
         lines.append('    }')
-        lines.append(f'    return {m.name}_clock_{clk}(s);')
+        lines.append(f'    return {m.name}_clock_{tag}(s);')
         lines.append('}')
         lines.append('')
     return lines
@@ -436,6 +448,29 @@ def module_clocks (m):
         if p.kind == 'ff' and p.clock and p.clock not in seen:
             seen.add(p.clock)
             out.append(p.clock)
+    return out
+
+
+def hierarchy_clocks (m, by_name):
+    """Every clock name visible at this level, including one that only
+    reaches a child.
+
+    module_clocks sees a module's own processes. A block whose clock
+    does nothing but drive an instance, as a per-domain reset
+    synchroniser does, has no process of its own on it, so without this
+    it gets no clock function and the simulator either does nothing on
+    that edge or clocks everything on it."""
+    out = list(module_clocks(m))
+    for inst in m.instances:
+        child = by_name.get(inst.module)
+        if child is None:
+            continue
+        inner = set(hierarchy_clocks(child, by_name))
+        for formal, actual in inst.ports.items():
+            if actual is None or getattr(actual, 'op', None) != 'ref':
+                continue
+            if (formal in inner) and (actual.value not in out):
+                out.append(actual.value)
     return out
 
 
@@ -456,7 +491,7 @@ def map_inst_clock (inst, child, parent_clock):
 
 
 def posedge_lines (m, by_name, clock):
-    suffix = '' if clock is None else '_' + clock
+    suffix = '' if clock is None else '_' + clock_id(clock)
     lines = [f'static void {m.name}_posedge{suffix}({m.name} *s)']
     lines.append('{')
     for p in m.processes:
