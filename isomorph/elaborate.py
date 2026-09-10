@@ -53,6 +53,7 @@ class Elaborated:
         self.instances = {}                 # name -> Elaborated
         self.open_ports = set()             # formals connected to open_port()
         self.instance_name = None
+        self._name_override = None          # set by _resolve_names
         self.line = 0                       # the instantiating call's line
         self.port_names = {}                # id(leaf signal) -> port name
         self._sort(arguments, frame_locals)
@@ -161,6 +162,18 @@ class Elaborated:
 
     @property
     def module_name (self):
+        """What this block is called in the emitted HDL.
+
+        Its own name, unless the design holds two different builds of
+        it, in which case both are suffixed to tell them apart. See
+        _resolve_names for why it is that way round.
+        """
+        if self._name_override is not None:
+            return self._name_override
+        return self._built_name
+
+    @property
+    def _built_name (self):
         """Block name, suffixed by structural parameters that differ from
         the defaults (4.1)."""
         defaults = {name: p.default for name, p in
@@ -187,6 +200,7 @@ class Elaborated:
     def walk (self):
         """Every distinct elaborated block below and including this one,
         leaves first."""
+        self._resolve_names()
         seen = {}
         def visit (node):
             for child in node.instances.values():
@@ -194,6 +208,40 @@ class Elaborated:
             seen.setdefault(node.module_name, node)
         visit(self)
         return list(seen.values())
+
+    def _resolve_names (self):
+        """Name a block after itself unless the design builds it twice.
+
+        A parameter that differs from its default is baked into the
+        module during elaboration - a width, a counter limit, the
+        contents of a memory - so two blocks built from one source with
+        different parameters really are two modules, and they cannot
+        share a name. That is why the name carries the parameters.
+
+        But it only has to carry them when there is something to tell
+        apart. Three uarts at one baud rate are one module instantiated
+        three times, which is what an instance name is for, and calling
+        that module uart_SYSTEM_CLOCK_50000000 tells nobody
+        anything. A design that holds one build of a block gets the
+        block's own name; only a design that holds two of them pays for
+        the distinction, and then the suffix is doing real work.
+
+        Nothing else changes: the modules are still one per distinct
+        build, and an instance still refers to its own by name.
+        """
+        by_block = {}
+        def visit (node):
+            for child in node.instances.values():
+                visit(child)
+            by_block.setdefault(node.block_name, {}) \
+                    .setdefault(node._built_name, []).append(node)
+        visit(self)
+        for block, builds in by_block.items():
+            if len(builds) != 1:
+                continue
+            for nodes in builds.values():
+                for node in nodes:
+                    node._name_override = block
 
 
 def _port_names (name, value):
