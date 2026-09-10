@@ -116,14 +116,19 @@ def interface (name, **roles):
 
 
 class Signal:
-    """signal(), signal(W), signal(W, wrap = True), signal(enum_type),
+    """signal(), signal(W), signal(W, reset = True), signal(enum_type),
     signal(struct_type). The name is filled in at elaboration from the
-    variable that holds it."""
+    variable that holds it.
 
-    def __init__ (self, width = 1, wrap = False, reset = None, kind = 'vector',
+    Arithmetic on a signal is modular, as it is in SystemVerilog: a
+    value assigned to a signal is the low bits of what was computed.
+    There is no other kind of signal, and no flag to ask for one,
+    because the width rules already make you say where a carry goes:
+    (count + 1)[7:0] is the only way to write it."""
+
+    def __init__ (self, width = 1, reset = None, kind = 'vector',
                   type = None):
         self.width = width
-        self.wrap = wrap
         self.reset = reset
         self.kind = kind                # 'bit', 'vector', 'enum', 'struct'
         self.type = type
@@ -147,21 +152,21 @@ class Signal:
         return f'signal({self.name or "?"}[{self.width}])'
 
 
-def signal (width = 1, wrap = False, reset = None):
+def signal (width = 1, reset = None):
     if isinstance(width, EnumType):
         return Signal(width.width, kind = 'enum', type = width, reset = reset)
     if isinstance(width, StructType):
         return Signal(width.width, kind = 'struct', type = width)
     if not isinstance(width, int) or width < 1:
         raise IsomorphError(f'signal width must be a positive int, not {width!r}')
-    return Signal(width, wrap, reset, 'bit' if width == 1 else 'vector')
+    return Signal(width, reset, 'bit' if width == 1 else 'vector')
 
 
 class SignalArray(list):
     """signals(N, W): N signals of W bits, one array port or memory."""
 
-    def __init__ (self, count, width, wrap = False):
-        super().__init__(Signal(width, wrap, kind = 'bit' if width == 1
+    def __init__ (self, count, width):
+        super().__init__(Signal(width, kind = 'bit' if width == 1
                                 else 'vector') for _ in range(count))
         self.width = width
         self.name = None
@@ -171,8 +176,8 @@ class SignalArray(list):
             element.parent = self
 
 
-def signals (count, width = 1, wrap = False, style = None):
-    array = SignalArray(count, width, wrap)
+def signals (count, width = 1, style = None):
+    array = SignalArray(count, width)
     if style:
         array.attributes['ram_style'] = style
     return array

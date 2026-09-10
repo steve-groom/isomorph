@@ -18,13 +18,21 @@ def min_width (value):
     return (-value - 1).bit_length() + 1
 
 
+BAR_SV = '//' + '-' * 77
+
+
 def emit_sv (modules):
-    """SystemVerilog text for the module list, leaves first."""
+    """SystemVerilog text for the module list, leaves first.
+
+    One file holds every module in the design (SPEC 7), so a bar to
+    column 79 goes between them: with each module carrying its own
+    header comment there is otherwise nothing to say where one ends
+    and the next begins."""
     chunks = []
     preamble = struct_typedefs(modules)
     if preamble:
         chunks.append(preamble)
-    chunks += [emit_module(m) for m in modules]
+    chunks += [BAR_SV + '\n' + emit_module(m) for m in modules]
     text = '\n\n'.join(chunks)
     return text + ('\n' if not text.endswith('\n') else '')
 

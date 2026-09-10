@@ -136,10 +136,10 @@ class Analyser:
                 if enc and enc != 'auto':
                     attrs.setdefault('fsm_encoding', enc)
                     attrs.setdefault('syn_encoding', enc)
-            signals.append(ir.Sig(name, s.width, s.kind, s.wrap, s.reset,
+            signals.append(ir.Sig(name, s.width, s.kind, s.reset,
                                   s.type, attrs, 0, s.line))
         for name, a in e.arrays.items():
-            signals.append(ir.Sig(name, a.width, 'vector', False, None, None,
+            signals.append(ir.Sig(name, a.width, 'vector', None, None,
                                   dict(a.attributes), len(a), a.line))
         signals.sort(key = lambda s: s.line)
         previous = e.func.__code__.co_firstlineno

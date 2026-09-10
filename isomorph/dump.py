@@ -21,8 +21,6 @@ def dump_module (m):
         extra = f'    {s.trailing}' if s.trailing else ''
         if s.array:
             extra += f' [{s.array}]'
-        if s.wrap:
-            extra += ' wrap'
         if s.kind == 'enum':
             extra = f' enum {s.type.name}' + extra
         out.append(f'  signal {s.name} [{s.width}]{extra}')

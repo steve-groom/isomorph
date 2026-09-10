@@ -27,8 +27,15 @@ def min_width (value):
     return (-value - 1).bit_length() + 1
 
 
+BAR_VHDL = '--' + '-' * 77
+
+
 def emit_vhdl (modules):
-    """VHDL-2008 text for the module list, leaves first."""
+    """VHDL-2008 text for the module list, leaves first.
+
+    One file holds every design unit, so a bar to column 79 goes
+    between them: with each carrying its own header comment there is
+    otherwise nothing to say where one ends and the next begins."""
     if not modules:
         return ''
     for m in modules:
@@ -39,7 +46,8 @@ def emit_vhdl (modules):
     if pkg:
         parts.append(pkg)
     for m in modules:
-        parts.append(emit_unit(m, by_name, modules[-1].name))
+        parts.append(BAR_VHDL + '\n' + emit_unit(m, by_name,
+                                                 modules[-1].name))
     text = '\n\n'.join(parts)
     return text + ('\n' if not text.endswith('\n') else '')
 

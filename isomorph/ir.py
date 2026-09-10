@@ -92,7 +92,6 @@ class Sig:
     name: str
     width: int
     kind: str                  # bit, vector, enum, struct
-    wrap: bool = False
     reset: object = None
     type: object = None
     attributes: dict = field(default_factory = dict)
