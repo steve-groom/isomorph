@@ -346,7 +346,8 @@ def run_stmt (ctx, s):
                 break
     elif isinstance(s, ir.Assert):
         if not eval_cond(ctx, s.cond):
-            raise SimError(f'assertion failed at line {s.line}')
+            text = s.message or 'assertion failed'
+            raise SimError(f'{text} (line {s.line})')
     elif isinstance(s, ir.Return):
         ctx.fn_return = eval_expr(ctx, s.value) & mask(s.value.width)
 

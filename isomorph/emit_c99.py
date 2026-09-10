@@ -191,17 +191,77 @@ def root_name (expr):
     return expr.value
 
 
+def has_asserts (modules):
+    """Does anything in this design carry an assert?
+
+    The helpers below cost nothing at run time and a -Werror build
+    refuses an unused static function, so a design with no invariants
+    does not get the machinery."""
+
+    def walk (body):
+        for s in body:
+            if isinstance(s, ir.Assert):
+                return True
+            for part in (getattr(s, 'body', None) or []):
+                if walk([part]):
+                    return True
+            for _, branch in (getattr(s, 'branches', None) or []):
+                if walk(branch):
+                    return True
+            for _, arm in (getattr(s, 'arms', None) or []):
+                if walk(arm):
+                    return True
+        return False
+
+    for m in modules:
+        for p in m.processes:
+            if walk(p.body):
+                return True
+        for f in m.functions:
+            if walk(f.body):
+                return True
+    return False
+
+
 def emit_source (modules, top):
     by_name = {m.name: m for m in modules}
     lines = [
         f'#include "{top}.h"',
         '#include <string.h>',
+        '#include <stdio.h>',
         '',
         f'#define ISO_MASK(w) ((unsigned)(w) >= 64u ? ~0ULL : '
         f'((1ULL << (w)) - 1ULL))',
         f'#define ISO_SETTLE {SETTLE_LIMIT}',
         '',
     ]
+    if has_asserts(modules):
+        lines += [
+            '/* An assert that fires records itself here rather than',
+            '   stopping, so the whole settle finishes and the caller',
+            '   raises once with the first message. This used to be',
+            '   emitted as a comment, which meant a design could carry',
+            '   an invariant only two of the three backends checked. */',
+            'static int iso_assert_hit;',
+            'static char iso_assert_text[256];',
+            '',
+            'static void iso_assert_fail (const char *text)',
+            '{',
+            '    if (!iso_assert_hit) {',
+            '        iso_assert_hit = 1;',
+            '        snprintf(iso_assert_text, sizeof iso_assert_text,',
+            '                 "%s", text);',
+            '    }',
+            '}',
+            '',
+            'int iso_assert_failed (void) { return iso_assert_hit; }',
+            'const char *iso_assert_message (void)',
+            '{',
+            '    return iso_assert_text;',
+            '}',
+            'void iso_assert_clear (void) { iso_assert_hit = 0; }',
+            '',
+        ]
     for m in modules:
         lines.append(f'static void {m.name}_posedge({m.name} *s);')
         for clk in module_clocks(m):
@@ -650,7 +710,11 @@ def stmt_lines (ctx, body, indent):
         elif isinstance(s, ir.Match):
             lines += c_match(ctx, s, indent)
         elif isinstance(s, ir.Assert):
-            lines.append(f'{pad}/* assert {c_expr(ctx, s.cond)} */;')
+            text = (s.message or 'assertion failed').replace('"', "'")
+            lines.append(f'{pad}if (!({c_cond(ctx, s.cond)})) {{')
+            lines.append(f'{pad}    iso_assert_fail("{text} (line '
+                         f'{s.line})");')
+            lines.append(f'{pad}}}')
         elif isinstance(s, ir.Return):
             w = s.value.width
             lines.append(f'{pad}return ({c_expr(ctx, s.value)}) & '

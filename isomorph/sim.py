@@ -3,7 +3,8 @@ import json
 import os
 import subprocess
 import tempfile
-from ctypes import POINTER, Structure, c_int, c_uint64, CDLL, byref
+from ctypes import (POINTER, Structure, c_int, c_uint64, c_char_p, CDLL,
+                    byref)
 
 from .analyse import analyse
 from .elaborate import Elaborated
@@ -430,6 +431,12 @@ class C99Backend:
                 edge.argtypes = [POINTER(self.ctype)]
                 edge.restype = None
                 self._edge_by[clk] = edge
+        self._assert_failed = getattr(self.lib, 'iso_assert_failed', None)
+        self._assert_message = getattr(self.lib, 'iso_assert_message', None)
+        self._assert_clear = getattr(self.lib, 'iso_assert_clear', None)
+        if self._assert_failed is not None:
+            self._assert_failed.restype = c_int
+            self._assert_message.restype = c_char_p
         self._settle = getattr(self.lib, name + '_settle', None)
         if self._settle is not None:
             self._settle.argtypes = [POINTER(self.ctype)]
@@ -439,6 +446,16 @@ class C99Backend:
     def eval (self):
         if self._eval(byref(self.state)) != 0:
             raise SimError(f'combinational loop in {self.top.name}')
+        self._check_asserts()
+
+    def _check_asserts (self):
+        """Raise if an assert fired anywhere in the last settle."""
+        if self._assert_failed is None or not self._assert_failed():
+            return
+        text = self._assert_message()
+        self._assert_clear()
+        raise SimError(text.decode('ascii', 'replace')
+                       if isinstance(text, bytes) else str(text))
 
     def clock (self, clock = None):
         if clock is None:
@@ -453,6 +470,7 @@ class C99Backend:
                 'how a multi-clock design quietly passes.')
         if r != 0:
             raise SimError(f'combinational loop in {self.top.name}')
+        self._check_asserts()
 
     def clock_group (self, clocks):
         """Several clocks whose edges land at the same time.
@@ -474,6 +492,7 @@ class C99Backend:
             self._edge_by[name](byref(self.state))
         if self._settle(byref(self.state)) != 0:
             raise SimError(f'combinational loop in {self.top.name}')
+        self._check_asserts()
         return None
 
     def tick (self):

@@ -67,13 +67,36 @@ def emit_shim (top, slots, clocks):
         f'#include "V{name}.h"',
         '#include "verilated.h"',
         '#include <stdint.h>',
+        '#include <cstdio>',
+        '#include <cstring>',
         '',
         f'static V{name} *g_top = 0;',
         '',
+        '/* Verilator ends the process when an immediate assertion',
+        '   fires. That is the right default for a standalone harness',
+        '   and the wrong one here: the bench is a Python program, and',
+        '   killing the interpreter loses the cycle it was on and every',
+        '   other check it was going to make. fatalOnError(false) is',
+        '   the supported way to ask for a recorded error instead of an',
+        '   abort; gotError() then says one happened. Verilator has',
+        '   already printed the message, with the process it fired',
+        '   in. */',
+        '',
         'extern "C" {',
+        '',
+        'int iso_assert_failed (void)',
+        '{',
+        '    return Verilated::threadContextp()->gotError() ? 1 : 0;',
+        '}',
+        '',
+        'void iso_assert_clear (void)',
+        '{',
+        '    Verilated::threadContextp()->gotError(false);',
+        '}',
         '',
         'void iso_init (void)',
         '{',
+        '    Verilated::threadContextp()->fatalOnError(false);',
         f'    if (!g_top) g_top = new V{name}();',
         '    g_top->eval();',
         '}',
@@ -202,7 +225,10 @@ class VerilatorBackend:
             f.write(emit_shim(self.top, self.slots, self.clocks))
 
         mdir = os.path.join(workdir, 'obj_dir')
-        cmd = ['verilator', '--cc', '--sv', '-Wno-fatal',
+        # --assert, or the immediate assertions the design carries are
+        # compiled away and the one backend that reads the emitted
+        # SystemVerilog checks none of them
+        cmd = ['verilator', '--cc', '--sv', '--assert', '-Wno-fatal',
                '-Wno-DECLFILENAME', '--top-module', name,
                '--Mdir', mdir, '-CFLAGS', '-fPIC']
         if trace:
@@ -246,11 +272,26 @@ class VerilatorBackend:
         self.lib.iso_clock.restype = c_int
         self.lib.iso_clock_group.argtypes = [c_uint64]
         self.lib.iso_clock_group.restype = c_int
+        self.lib.iso_assert_failed.restype = c_int
         self.lib.iso_init()
 
     # -- Simulator interface ------------------------------------------
     def eval (self):
         self.lib.iso_eval()
+        self._check_asserts()
+
+    def _check_asserts (self):
+        """Raise if an assertion fired during the last evaluation.
+
+        Verilator has already printed which one, where, and the text
+        that was written after the comma, so this only has to stop the
+        run rather than repeat it."""
+        if not self.lib.iso_assert_failed():
+            return
+        self.lib.iso_assert_clear()
+        raise SimError(
+            f'an assertion in {self.top.name} failed; verilator printed '
+            'it above, with the file, the line and the process')
 
     def clock (self, clock = None):
         name = clock or self.default_clock
@@ -259,6 +300,7 @@ class VerilatorBackend:
                            f'not {name!r}')
         if self.lib.iso_clock(self.index[name]) != 0:
             raise SimError(f'unknown clock {name}')
+        self._check_asserts()
 
     def clock_group (self, clocks):
         """Several clocks whose edges land at the same time.
@@ -278,6 +320,7 @@ class VerilatorBackend:
             mask |= 1 << self.clock_position[name]
         if self.lib.iso_clock_group(mask) != 0:
             raise SimError('grouped clock failed')
+        self._check_asserts()
         return None
 
     def tick (self):

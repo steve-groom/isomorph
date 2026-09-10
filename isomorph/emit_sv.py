@@ -74,7 +74,8 @@ def lint_sv (path, top = None):
 
     -Wno-DECLFILENAME: one file holds every module (SPEC 7), so only the
     top name matches the filename."""
-    cmd = ['verilator', '--lint-only', '-Wall', '--sv', '-Wno-DECLFILENAME']
+    cmd = ['verilator', '--lint-only', '-Wall', '--sv', '--assert',
+           '-Wno-DECLFILENAME']
     if top:
         cmd += ['--top-module', top]
     cmd.append(path)
@@ -686,7 +687,11 @@ def stmt_lines (body, indent, nonblocking):
             lines += match_lines(s, indent, nonblocking)
         elif isinstance(s, ir.Assert):
             lines.append('`ifndef SYNTHESIS')
-            line = f'{pad}assert ({cond_text(s.cond)});'
+            line = f'{pad}assert ({cond_text(s.cond)})'
+            if s.message:
+                line += f' else $error("{s.message}");'
+            else:
+                line += ';'
             lines.append(with_trailing(line, trailing))
             lines.append('`endif')
         elif isinstance(s, ir.Return):

@@ -837,7 +837,8 @@ def stmt_lines (ctx, body, indent):
         elif isinstance(s, ir.Assert):
             lines.append(f'{pad}-- synthesis translate_off')
             cond = vhdl_condition(ctx, s.cond)
-            line = f'{pad}assert {cond} report "assert" severity error;'
+            text = s.message or f'assertion at line {s.line}'
+            line = f'{pad}assert {cond} report "{text}" severity error;'
             lines.append(with_trailing(line, trailing))
             lines.append(f'{pad}-- synthesis translate_on')
         elif isinstance(s, ir.Return):

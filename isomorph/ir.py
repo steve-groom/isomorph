@@ -64,6 +64,7 @@ class For:
 @dataclass
 class Assert:
     cond: Expr
+    message: str = None         # the text written after the comma
     line: int = 0
     comments: list = field(default_factory = list)
     trailing: str = None

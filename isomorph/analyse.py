@@ -488,6 +488,7 @@ class Analyser:
             return self.match_stmt(node, scope)
         if isinstance(node, ast.Assert):
             return ir.Assert(self.expression(node.test, scope),
+                             self.assert_message(node),
                              self.line_base + node.lineno)
         if isinstance(node, ast.Return):
             return ir.Return(self.expression(node.value, scope),
@@ -951,6 +952,29 @@ class Analyser:
                            [left, right], op)
         return ir.Expr('binop', left.width + right.width, signed,
                        [left, right], op)
+
+    def assert_message (self, node):
+        """The text after the comma in an assert, or None.
+
+        It has to be a plain string. The message is emitted into the
+        SystemVerilog and the VHDL as a literal, so it cannot be built
+        at run time from anything the hardware knows, and an f-string
+        or a concatenation here would look like it would work."""
+        if node.msg is None:
+            return None
+        if (isinstance(node.msg, ast.Constant)
+                and isinstance(node.msg.value, str)):
+            text = node.msg.value
+            if '"' in text or '\\' in text or '\n' in text:
+                self.error(node, 'assert message must be plain text with '
+                           'no quote, backslash or newline: it is emitted '
+                           'as a literal in two languages')
+            return text
+        self.error(node, 'assert message must be a plain string, not '
+                   + ast.unparse(node.msg) + '. It becomes a literal in '
+                   'the emitted HDL, so nothing about it can be worked '
+                   'out while the design is running.')
+        return None
 
     def subscript (self, node, scope):
         base_obj = self.resolve(node.value, scope, node)
