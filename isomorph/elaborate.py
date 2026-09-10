@@ -87,6 +87,20 @@ class Elaborated:
                 for index, element in enumerate(value):
                     element.name = f'{name}[{index}]'
                 self.arrays[name] = value
+            elif isinstance(value, SimpleNamespace):
+                # a bundle used inside a block rather than as a port:
+                # one stage of a mux chain handing to the next. Its
+                # members are ordinary signals and want ordinary names,
+                # and without one they are all called None and look to
+                # the driver check like the same wire
+                for member, element in vars(value).items():
+                    if not isinstance(element, Signal):
+                        continue
+                    if id(element) in port_ids:
+                        continue
+                    if element.name is None:
+                        element.name = f'{name}_{member}'
+                    self.signals[element.name] = element
             elif isinstance(value, EnumType):
                 value.name = name
                 self.enums[name] = value

@@ -820,6 +820,12 @@ def sv_expr (e, index = False):
         # bit select. Parameter arithmetic (WIDTH - 1) is emitted as
         # an unsized index; a signal index is width-cast for Verilator.
         if e.width != 1:
+            if idx_e.op == 'const':
+                # unsized: a sized literal is as wide as the value
+                # needs rather than as wide as the array wants, so
+                # command[1] came out as command[1'b1] and verilator
+                # asked for the two bits a three-deep array indexes with
+                return f'{sv_expr(a[0])}[{sv_expr(idx_e, index = True)}]'
             return f'{sv_expr(a[0])}[{sv_expr(idx_e)}]'
         if idx_e.op == 'const':
             idx = sv_expr(idx_e, index = True)
