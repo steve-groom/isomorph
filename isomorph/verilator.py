@@ -17,8 +17,21 @@ import tempfile
 from ctypes import CDLL, c_int, c_uint64
 
 from .emit_sv import write_sv
-from .emit_c99 import hierarchy_clocks
+from .emit_c99 import hierarchy_clocks, ff_driven_names
 from .execute import SimError
+
+
+def _internal_cases (internals):
+    out = []
+    for _, index, width, member in internals:
+        ctype = _c_type(width)
+        if ctype is None:
+            out.append(f'    case {index}: return (uint64_t)'
+                       f'g_top->rootp->{member}[word];')
+        else:
+            out.append(f'    case {index}: return (uint64_t)'
+                       f'g_top->rootp->{member};')
+    return out
 
 
 def _c_type (width):
@@ -61,10 +74,77 @@ def port_slots (top):
     return slots
 
 
-def emit_shim (top, slots, clocks):
+def internal_slots (top, first_index):
+    """[(name, index, width, member)] for the top's own flip-flops.
+
+    Ports are reachable already. What a bench cannot see on Verilator
+    is the state: the counter, the shift register, the state enum. Only
+    the top module's own registers, and only reading them, so nothing
+    here can write a non-blocking target behind the model's back.
+
+    Arrays are left out. A RAM is not what someone is trying to look at
+    when they ask why a state machine is stuck, and one member per
+    element is a lot of shim for that.
+    """
+    ports = {p.name for p in top.ports}
+    driven = ff_driven_names(top)
+    out = []
+    for sig in top.signals:
+        if sig.name in ports or sig.array or sig.name not in driven:
+            continue
+        member = f'{top.name}__DOT__{sig.name}'
+        out.append((sig.name, first_index + len(out), sig.width, member))
+    return out
+
+
+def emit_vlt (top, internals):
+    """Verilator's own configuration file, so the annotation never
+    reaches the SystemVerilog.
+
+    public_flat_rd and nothing else. Plain `public` would stop
+    Verilator inlining the module and change what is being simulated;
+    public_flat_rw would let a bench write a flip-flop from outside the
+    model, which mis-simulates the same way a force does and, on 5.020,
+    gets generated clocks wrong.
+    """
+    lines = ['`verilator_config']
+    for name, _, _, _ in internals:
+        lines.append(f'public_flat_rd -module "{top.name}" '
+                     f'-var "{name}"')
+    return '\n'.join(lines) + '\n'
+
+
+def check_public (header_path, internals, top_name):
+    """Every internal we asked for is in the generated model, under
+    the name it has in the Python.
+
+    The prefix Verilator adds is mechanical and the leaf is the name
+    that was written. If a leaf is missing, something was renamed or
+    optimised out, and quietly losing visibility is worse than saying
+    so."""
+    try:
+        with open(header_path, encoding = 'utf-8', errors = 'replace') as f:
+            text = f.read()
+    except OSError:
+        return
+    missing = [name for name, _, _, member in internals
+               if member not in text]
+    if missing:
+        raise SimError(
+            f'verilator did not keep {", ".join(sorted(missing))} of '
+            f'{top_name} readable. Isomorph never renames, so a name '
+            'that is not in the model is a name that went missing, and '
+            'a bench reading it would get a wrong answer rather than '
+            'an error.')
+
+
+def emit_shim (top, slots, clocks, internals = ()):
     name = top.name
     out = [
         f'#include "V{name}.h"',
+        # the root holds the module's own signals, which is where a
+        # public_flat_rd flip-flop lives
+        f'#include "V{name}___024root.h"',
         '#include "verilated.h"',
         '#include <stdint.h>',
         '#include <cstdio>',
@@ -146,6 +226,18 @@ def emit_shim (top, slots, clocks):
         '    return 0;',
         '}',
         '',
+        '/* The top module\'s own flip-flops, read only. The prefix is',
+        '   verilator\'s; the leaf is the name written in the Python. */',
+        'uint64_t iso_get_internal (int idx, int word)',
+        '{',
+        '    (void)word;',
+        '    switch (idx) {',
+    ] + _internal_cases(internals) + [
+        '    default: break;',
+        '    }',
+        '    return 0;',
+        '}',
+        '',
         'int iso_clock (int idx)',
         '{',
         '    switch (idx) {',
@@ -218,11 +310,15 @@ class VerilatorBackend:
         self.clock_position = {c: i for i, c in enumerate(
             [c for c in self.clocks if c in self.index])}
 
+        self.internals = internal_slots(self.top, len(self.slots))
+        self.internal_index = {n: i for n, i, _, _ in self.internals}
+        self.internal_width = {n: w for n, _, w, _ in self.internals}
+
         sv_path = os.path.join(workdir, name + '.sv')
         write_sv(modules, sv_path)
-        shim_path = os.path.join(workdir, 'iso_shim.cpp')
-        with open(shim_path, 'w', encoding = 'ascii') as f:
-            f.write(emit_shim(self.top, self.slots, self.clocks))
+        vlt_path = os.path.join(workdir, name + '.vlt')
+        with open(vlt_path, 'w', encoding = 'ascii') as f:
+            f.write(emit_vlt(self.top, self.internals))
 
         mdir = os.path.join(workdir, 'obj_dir')
         # --assert, or the immediate assertions the design carries are
@@ -233,11 +329,19 @@ class VerilatorBackend:
                '--Mdir', mdir, '-CFLAGS', '-fPIC']
         if trace:
             cmd.append('--trace')
-        cmd.append(sv_path)
+        cmd += [vlt_path, sv_path]
         build = subprocess.run(cmd, capture_output = True, text = True)
         if build.returncode != 0:
             raise SimError('verilator failed:\n'
                            + (build.stderr or build.stdout))
+        check_public(os.path.join(mdir, f'V{name}___024root.h'),
+                     self.internals, name)
+        # the shim is written after verilator, because it reads members
+        # that only exist once the model has been generated
+        shim_path = os.path.join(workdir, 'iso_shim.cpp')
+        with open(shim_path, 'w', encoding = 'ascii') as f:
+            f.write(emit_shim(self.top, self.slots, self.clocks,
+                              self.internals))
         make = subprocess.run(['make', '-C', mdir, '-f', f'V{name}.mk',
                                f'V{name}__ALL.a'],
                               capture_output = True, text = True)
@@ -266,6 +370,8 @@ class VerilatorBackend:
         self.lib = CDLL(so_path)
         self.lib.iso_get.argtypes = [c_int, c_int]
         self.lib.iso_get.restype = c_uint64
+        self.lib.iso_get_internal.argtypes = [c_int, c_int]
+        self.lib.iso_get_internal.restype = c_uint64
         self.lib.iso_set.argtypes = [c_int, c_int, c_uint64]
         self.lib.iso_eval.restype = c_int
         self.lib.iso_clock.argtypes = [c_int]
@@ -331,21 +437,35 @@ class VerilatorBackend:
         if path in self.index:
             return self.index[path], self.width[path]
         raise SimError(
-            f'{path!r} is not a port of {self.top.name}; the verilator '
-            'backend reaches top-level ports only')
+            f'{path!r} is not a port of {self.top.name}, nor one of its '
+            'flip-flops. The verilator backend reaches the top module: '
+            'its ports, and its own registers for reading.')
 
     def get (self, path):
+        if path in self.internal_index:
+            return self._read(self.lib.iso_get_internal,
+                              self.internal_index[path],
+                              self.internal_width[path])
         idx, width = self._slot(path)
+        return self._read(self.lib.iso_get, idx, width)
+
+    def _read (self, reader, idx, width):
         if width <= 64:
-            value = int(self.lib.iso_get(idx, 0))
-            return value & ((1 << width) - 1)
+            return int(reader(idx, 0)) & ((1 << width) - 1)
         value = 0
         for word in range((width + 31) // 32):
-            part = int(self.lib.iso_get(idx, word)) & 0xffffffff
+            part = int(reader(idx, word)) & 0xffffffff
             value |= part << (32 * word)
         return value & ((1 << width) - 1)
 
     def set (self, path, value):
+        if path in self.internal_index:
+            raise SimError(
+                f'{path!r} is a flip-flop inside {self.top.name}, and it '
+                'can be read but not written. Writing one from outside '
+                'the model races the non-blocking assignment that owns '
+                'it, so the three backends would stop agreeing. Drive '
+                'the port that leads to it instead.')
         idx, width = self._slot(path)
         value = int(value) & ((1 << width) - 1)
         if width <= 64:
