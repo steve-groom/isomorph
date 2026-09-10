@@ -101,6 +101,8 @@ def emit_header (modules, top):
             tag = clock_id(clk)
             lines.append(f'int {m.name}_clock_{tag}({m.name} *s);')
             lines.append(f'int {m.name}_tick_{tag}({m.name} *s);')
+            lines.append(f'void {m.name}_edge_{tag}({m.name} *s);')
+        lines.append(f'int {m.name}_settle({m.name} *s);')
         lines.append('')
     lines.append('typedef struct IsoVcd IsoVcd;')
     lines.append('typedef struct IsoLog IsoLog;')
@@ -421,6 +423,26 @@ def eval_tick_lines (m, by_name):
     lines.append(f'    return {m.name}_clock(s);')
     lines.append('}')
     lines.append('')
+    # An edge on its own, with no commit and no settle after it.
+    # Two clocks that land on the same femtosecond have to take their
+    # edges before either one's new values are visible, or the second
+    # domain samples the first domain's post-edge value and a
+    # clock-domain crossing simulates as something no hardware does.
+    lines.append('/* one clock edge, no commit: for coincident edges */')
+    for clk in hierarchy_clocks(m, by_name):
+        tag = clock_id(clk)
+        lines.append(f'void {m.name}_edge_{tag}({m.name} *s)')
+        lines.append('{')
+        lines.append(f'    {m.name}_posedge_{tag}(s);')
+        lines.append('}')
+        lines.append('')
+    lines.append(f'int {m.name}_settle({m.name} *s)')
+    lines.append('{')
+    lines.append(f'    {m.name}_commit(s);')
+    lines.append(f'    return {m.name}_eval(s);')
+    lines.append('}')
+    lines.append('')
+
     for clk in hierarchy_clocks(m, by_name):
         tag = clock_id(clk)
         lines.append(f'int {m.name}_clock_{tag}({m.name} *s)')

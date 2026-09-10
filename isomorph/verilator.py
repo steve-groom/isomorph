@@ -143,6 +143,29 @@ def emit_shim (top, slots, clocks):
         '    return 0;',
         '}',
         '',
+        '/* Several clocks whose edges land at the same time. They all',
+        '   rise together, so a domain that samples another domain sees',
+        '   the value it had before this instant, which is what the',
+        '   hardware does and what taking them one at a time would',
+        '   not. Bit n of the mask is clocks[n]. */',
+        'int iso_clock_group (uint64_t mask)',
+        '{',
+    ]
+    grouped = [c for c in clocks if c in by_name]
+    if not grouped:
+        out.append('    (void)mask;')
+    for position, clk in enumerate(grouped):
+        out.append(f'    if (mask & (1ULL << {position})) '
+                   f'{{ g_top->{clk} = 1; }}')
+    out.append('    g_top->eval();')
+    for position, clk in enumerate(grouped):
+        out.append(f'    if (mask & (1ULL << {position})) '
+                   f'{{ g_top->{clk} = 0; }}')
+    out += [
+        '    g_top->eval();',
+        '    return 0;',
+        '}',
+        '',
         '}',
         '',
     ]
@@ -167,6 +190,10 @@ class VerilatorBackend:
         self.width = {n: w for n, _, w, _ in self.slots}
         self.clocks = hierarchy_clocks(self.top, self.by_name)
         self.default_clock = self.clocks[0] if self.clocks else None
+        # the mask bit each clock owns in iso_clock_group, which is its
+        # place in the list the shim was written from
+        self.clock_position = {c: i for i, c in enumerate(
+            [c for c in self.clocks if c in self.index])}
 
         sv_path = os.path.join(workdir, name + '.sv')
         write_sv(modules, sv_path)
@@ -217,6 +244,8 @@ class VerilatorBackend:
         self.lib.iso_eval.restype = c_int
         self.lib.iso_clock.argtypes = [c_int]
         self.lib.iso_clock.restype = c_int
+        self.lib.iso_clock_group.argtypes = [c_uint64]
+        self.lib.iso_clock_group.restype = c_int
         self.lib.iso_init()
 
     # -- Simulator interface ------------------------------------------
@@ -230,6 +259,26 @@ class VerilatorBackend:
                            f'not {name!r}')
         if self.lib.iso_clock(self.index[name]) != 0:
             raise SimError(f'unknown clock {name}')
+
+    def clock_group (self, clocks):
+        """Several clocks whose edges land at the same time.
+
+        All of them rise together and all of them fall together, so a
+        flop sampling another domain sees that domain's pre-edge
+        value. Clocking them one after another would show it the new
+        one, which is the one thing a crossing must never see."""
+        names = list(clocks)
+        if len(names) == 1:
+            return self.clock(names[0])
+        mask = 0
+        for name in names:
+            if name not in self.clock_position:
+                raise SimError(
+                    f'{name!r} is not a clock of {self.top.name}')
+            mask |= 1 << self.clock_position[name]
+        if self.lib.iso_clock_group(mask) != 0:
+            raise SimError('grouped clock failed')
+        return None
 
     def tick (self):
         self.eval()

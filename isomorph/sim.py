@@ -83,6 +83,13 @@ class Simulator:
 
     def set (self, key, value):
         name = self._name(key)
+        if name in self.clocks or name == self.clock_name:
+            raise SimError(
+                f'{name!r} is a clock, and a clock is not an input. Give '
+                'it a period with add_clock() and advance it with tick(), '
+                'posedge() or run(). Driving it by hand makes the three '
+                'backends disagree, because Verilator sees a pin move '
+                'and the other two do not.')
         if self._python is not None:
             self._python.set(name, value)
         else:
@@ -124,6 +131,28 @@ class Simulator:
         self._run_checks('comb')
 
     def posedge (self, clock = None):
+        """One rising edge, or several at the same instant.
+
+        Pass a list of clock names for coincident edges: they all take
+        their edge before any of them commits, so a flop sampling
+        another domain sees that domain's pre-edge value. That is what
+        the hardware does, and taking them one after another is not.
+        """
+        if isinstance(clock, (list, tuple, set)):
+            names = [self._name(c) for c in clock]
+            if not names:
+                raise SimError('posedge([]) has no clock to take')
+            self._run_checks('edge')
+            if self._python is not None:
+                for name in names:
+                    self._python.posedge(name, commit = False)
+                self._python.commit()
+            else:
+                self._native.clock_group(names)
+            self.cycle += 1
+            self.time += self._period(names[0])
+            self._dump()
+            return
         self._run_checks('edge')
         clk = self._name(clock) if clock is not None else None
         if self._python is not None:
@@ -135,8 +164,23 @@ class Simulator:
         self._dump()
 
     def tick (self, n = 1, clock = None):
+        """One clock period: settle, then take the edge.
+
+        A design with more than one clock has to say which one. Ticking
+        every domain on an unnamed clock is how a multi-clock design
+        quietly passes: the crossing never sees the two rates it was
+        written for. Use run(duration) to advance them all at their own
+        periods.
+        """
         n = int(n)
         clk = self._name(clock) if clock is not None else None
+        if clk is None and len(self.clocks) > 1:
+            named = ', '.join(sorted(self.clocks))
+            raise SimError(
+                f'{self.top.name} has more than one clock ({named}), so '
+                "tick() has to name one: tick(n, 'i_wr_clock'). To "
+                'advance them all at their own periods, use '
+                'run(duration).')
         for _ in range(n):
             if self._python is not None:
                 self._python.eval()
@@ -194,8 +238,7 @@ class Simulator:
         else:
             self._native.eval()
             self._run_checks('edge')
-            for c in group:
-                self._native.clock(c)
+            self._native.clock_group(group)
         self.cycle += 1
         self.time = t
         self._dump()
@@ -375,12 +418,22 @@ class C99Backend:
         self._clock.restype = c_int
         self._tick.restype = c_int
         self._clock_by = {}
+        self._edge_by = {}
         for clk in hierarchy_clocks(self.top, self.by_name):
             fn = getattr(self.lib, f'{name}_clock_{clock_id(clk)}', None)
             if fn is not None:
                 fn.argtypes = [POINTER(self.ctype)]
                 fn.restype = c_int
                 self._clock_by[clk] = fn
+            edge = getattr(self.lib, f'{name}_edge_{clock_id(clk)}', None)
+            if edge is not None:
+                edge.argtypes = [POINTER(self.ctype)]
+                edge.restype = None
+                self._edge_by[clk] = edge
+        self._settle = getattr(self.lib, name + '_settle', None)
+        if self._settle is not None:
+            self._settle.argtypes = [POINTER(self.ctype)]
+            self._settle.restype = c_int
         self._init(byref(self.state))
 
     def eval (self):
@@ -400,6 +453,28 @@ class C99Backend:
                 'how a multi-clock design quietly passes.')
         if r != 0:
             raise SimError(f'combinational loop in {self.top.name}')
+
+    def clock_group (self, clocks):
+        """Several clocks whose edges land at the same time.
+
+        Every domain takes its edge before any of them commits, so a
+        flop that samples another domain sees the value it had before
+        this instant. Doing them one at a time would let the second
+        domain read the first domain's new value, which is the one
+        thing a clock-domain crossing must never see.
+        """
+        names = list(clocks)
+        if len(names) == 1:
+            return self.clock(names[0])
+        if self._settle is None or not all(n in self._edge_by
+                                           for n in names):
+            raise SimError(
+                'this C99 model has no grouped edge; rebuild it')
+        for name in names:
+            self._edge_by[name](byref(self.state))
+        if self._settle(byref(self.state)) != 0:
+            raise SimError(f'combinational loop in {self.top.name}')
+        return None
 
     def tick (self):
         if self._tick(byref(self.state)) != 0:
