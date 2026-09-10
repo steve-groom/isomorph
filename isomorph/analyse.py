@@ -9,7 +9,7 @@ import tokenize
 from types import SimpleNamespace, FunctionType
 
 from . import ir
-from .signal import (Signal, SignalArray, Bundle, EnumType, EnumMember,
+from .signal import (Signal, SignalArray, EnumType, EnumMember,
     StructType, Process, Assign, Vector, IsomorphError, concat, replicate,
     bits, vector)
 from . import reserved
@@ -214,7 +214,7 @@ class Analyser:
                                      for s in value) else 'in'
             out.append(ir.Port(pname, value.width, direction, 'vector', None,
                                len(value)))
-        elif isinstance(value, (Bundle, SimpleNamespace)):
+        elif isinstance(value, SimpleNamespace):
             for member, element in vars(value).items():
                 if isinstance(element, Signal):
                     out += self._port_leaves(None, element)
@@ -228,7 +228,7 @@ class Analyser:
                 ports[formal] = None
             elif isinstance(actual, Signal):
                 ports[formal] = actual
-            elif isinstance(actual, (Bundle, SimpleNamespace)):
+            elif isinstance(actual, SimpleNamespace):
                 for member, element in vars(actual).items():
                     if isinstance(element, Signal):
                         ports[f'{formal}_{member}'] = element
@@ -701,7 +701,7 @@ class Analyser:
             return scope.names.get(node.id)
         if isinstance(node, ast.Attribute):
             base = self.resolve(node.value, scope, stmt)
-            if isinstance(base, (Bundle, SimpleNamespace)):
+            if isinstance(base, SimpleNamespace):
                 return getattr(base, node.attr, None)
             if isinstance(base, EnumType):
                 return getattr(base, node.attr)

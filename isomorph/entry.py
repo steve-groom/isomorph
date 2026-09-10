@@ -215,19 +215,14 @@ def main (elaborate, test = None, argv = None, prog = None):
 
     try:
         if opts.writing:
-            saved = sys.argv
-            sys.argv = [prog] \
-                + (['--allow-severe'] if opts.allow_severe else []) \
-                + (['--lint'] if opts.lint else []) \
-                + ['-o', opts.outdir]
-            try:
-                convert(elaborate(),
-                        dump_ir = opts.dump or None,
-                        sv = opts.sv if opts.sv is not None else False,
-                        vhdl = opts.vhdl if opts.vhdl is not None else False,
-                        c99 = opts.c99 if opts.c99 is not None else False)
-            finally:
-                sys.argv = saved
+            convert(elaborate(),
+                    dump_ir = opts.dump or None,
+                    sv = opts.sv if opts.sv is not None else False,
+                    vhdl = opts.vhdl if opts.vhdl is not None else False,
+                    c99 = opts.c99 if opts.c99 is not None else False,
+                    allow_severe = opts.allow_severe,
+                    lint = opts.lint,
+                    outdir = opts.outdir)
         if opts.run:
             if test is None:
                 print(f'{os.path.basename(prog)}: no test bench; this file '

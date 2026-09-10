@@ -24,7 +24,7 @@ After install, the house import works:
 
   from isomorph import (block, signal, signals, enum, always_ff,
       always_comb, assign, concat, replicate, bits, struct,
-      interface, interfaces, attr, open_port, instances)
+      attr, open_port, instances)
 EOF
 }
 
@@ -111,7 +111,7 @@ fi
 "$PYTHON" - <<'PY'
 from isomorph import (block, signal, signals, enum, always_ff,
     always_comb, assign, concat, replicate, bits, struct,
-    interface, interfaces, attr, open_port, instances)
+    attr, open_port, instances)
 import isomorph
 print('isomorph ok')
 print(' ', isomorph.__file__)

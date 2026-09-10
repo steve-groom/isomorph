@@ -2,8 +2,8 @@
 import os
 import sys
 
-from .signal import (signal, signals, vector, enum, struct, interface,
-    interfaces, attr, open_port, concat, replicate, bits, always_comb,
+from .signal import (signal, signals, vector, enum, struct,
+    attr, open_port, concat, replicate, bits, always_comb,
     always_ff, always_ff_async_reset, assign, instances, IsomorphError)
 from .elaborate import block, Elaborated
 from .analyse import analyse, fatal_warnings, ConversionError
@@ -16,7 +16,7 @@ from .execute import SimError
 from .sim import Simulator
 
 __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
-           'interface', 'interfaces', 'attr', 'open_port', 'concat',
+           'attr', 'open_port', 'concat',
            'replicate', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
@@ -24,42 +24,35 @@ __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
            'main']
 
 
-def _argv_has (flag):
-    return flag in sys.argv
-
-
-def _argv_value (flag, default = None):
-    if flag in sys.argv:
-        index = sys.argv.index(flag)
-        if index + 1 < len(sys.argv):
-            return sys.argv[index + 1]
-    return default
-
-
 def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
-             allow_severe = None):
+             allow_severe = False, lint = False, outdir = 'build'):
     """Analyse a block. Dump the IR with dump_ir / --dump.
 
     Default: write build/<top>.sv and print the path.
     sv / --sv: SystemVerilog (path or default).
     vhdl / --vhdl: VHDL-2008 (path or default).
     c99 / --c99: cycle-accurate C99 smoke (.c and .h).
-    --lint runs verilator and/or ghdl.
+    lint runs verilator and ghdl over what was written.
+    outdir is where a path that was not given by name goes.
 
     An inferred latch or a combinational loop stops the conversion.
-    allow_severe / --allow-severe carries on with it anyway and says
-    what it allowed.
+    allow_severe carries on with it anyway and says what it allowed.
+
+    Every option is an argument. This used to read sys.argv, which
+    meant a block imported by a parent behaved differently depending on
+    how the process happened to be started, and entry.py had to
+    rewrite sys.argv around the call to say what it wanted. Option
+    parsing lives in entry.py, which is the only thing that has a
+    command line.
     """
     if not isinstance(top, Elaborated):
         raise IsomorphError('convert() takes an elaborated block instance')
-    if allow_severe is None:
-        allow_severe = _argv_has('--allow-severe')
     modules, warnings = analyse(top, allow_severe)
     if allow_severe:
         for w in fatal_warnings(warnings):
             text = ' '.join(w.replace('severe:', '', 1).split())
             print('allowed severe:', text, file = sys.stderr)
-    dumping = dump_ir or _argv_has('--dump')
+    dumping = bool(dump_ir)
     if dumping:
         print(dump(modules, warnings))
     elif warnings:
@@ -81,10 +74,9 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     elif isinstance(sv, str):
         want_sv = True
         sv_path = sv
-    elif sv is True or _argv_has('--sv'):
+    elif sv is True:
         want_sv = True
-    elif (not dumping and vhdl is None and not _argv_has('--vhdl')
-          and c99 is None and not _argv_has('--c99')):
+    elif not dumping and vhdl is None and c99 is None:
         want_sv = True
 
     if vhdl is False:
@@ -92,7 +84,7 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     elif isinstance(vhdl, str):
         want_vhdl = True
         vhdl_path = vhdl
-    elif vhdl is True or _argv_has('--vhdl'):
+    elif vhdl is True:
         want_vhdl = True
 
     if c99 is False:
@@ -100,10 +92,9 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     elif isinstance(c99, str):
         want_c99 = True
         c99_path = c99
-    elif c99 is True or _argv_has('--c99'):
+    elif c99 is True:
         want_c99 = True
 
-    outdir = _argv_value('-o', 'build')
     top_name = modules[-1].name
     wrote = []
     if want_sv:
@@ -112,7 +103,7 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
             sv_path = os.path.join(outdir, top_name + '.sv')
         write_sv(modules, sv_path)
         wrote.append(sv_path)
-        if _argv_has('--lint'):
+        if lint:
             lint_sv(sv_path, top = top_name)
     if want_vhdl:
         if vhdl_path is None:
@@ -120,7 +111,7 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
             vhdl_path = os.path.join(outdir, top_name + '.vhd')
         write_vhdl(modules, vhdl_path)
         wrote.append(vhdl_path)
-        if _argv_has('--lint'):
+        if lint:
             lint_vhdl(vhdl_path)
     if want_c99:
         if c99_path is None:

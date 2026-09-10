@@ -105,16 +105,6 @@ def struct (name, **fields):
     return StructType(name, fields)
 
 
-class InterfaceType:
-    def __init__ (self, name, roles):
-        self.name = name
-        self.roles = roles              # role -> {member: 'in'|'out'}
-
-
-def interface (name, **roles):
-    return InterfaceType(name, roles)
-
-
 class Signal:
     """signal(), signal(W), signal(enum_type), signal(struct_type).
     The name is filled in at elaboration from the variable that holds
@@ -187,22 +177,6 @@ def signals (count, width = 1, style = None):
     if style:
         array.attributes['ram_style'] = style
     return array
-
-
-class Bundle:
-    """An interface port of one role: members are signals."""
-
-    def __init__ (self, kind, role):
-        self.kind = kind
-        self.role = role
-        self.name = None
-        for member, direction in kind.roles[role].items():
-            member_signal = Signal(1) if direction in ('in', 'out') else None
-            setattr(self, member, member_signal)
-
-
-def interfaces (count, kind, role):
-    return [Bundle(kind, role) for _ in range(count)]
 
 
 class OpenPort:

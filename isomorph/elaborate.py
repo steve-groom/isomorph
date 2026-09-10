@@ -6,7 +6,7 @@ import inspect
 import sys
 from types import FunctionType, SimpleNamespace
 
-from .signal import (Signal, SignalArray, Bundle, EnumType, StructType,
+from .signal import (Signal, SignalArray, EnumType, StructType,
     Process, Assign, Instances, OpenPort, IsomorphError, elaboration_stack)
 
 
@@ -17,7 +17,7 @@ class Elaborated:
         self.func = func
         self.block_name = func.__name__
         self.arguments = arguments          # bound arguments, in order
-        self.ports = {}                     # name -> Signal | Bundle | list
+        self.ports = {}                     # name -> Signal | namespace | list
         self.parameters = {}                # name -> int/bool/EnumType
         self.signals = {}                   # name -> Signal
         self.arrays = {}                    # name -> SignalArray
@@ -36,11 +36,11 @@ class Elaborated:
 
     def _sort (self, arguments, frame_locals):
         for name, value in arguments.items():
-            if isinstance(value, (Signal, SignalArray, Bundle, SimpleNamespace,
+            if isinstance(value, (Signal, SignalArray, SimpleNamespace,
                                   OpenPort)) or (isinstance(value, list) and
                                   value
                                   and isinstance(value[0],
-                                                 (Signal, Bundle))):
+                                                 Signal)):
                 self.ports[name] = value
                 self.port_names.update(_port_names(name, value))
             elif isinstance(value, (int, bool, EnumType, StructType, str)):
@@ -155,7 +155,7 @@ def _port_names (name, value):
         names[id(value)] = name
         for index, element in enumerate(value):
             names[id(element)] = f'{name}[{index}]'
-    elif isinstance(value, (Bundle, SimpleNamespace)):
+    elif isinstance(value, SimpleNamespace):
         names[id(value)] = name
         for member, element in vars(value).items():
             if isinstance(element, Signal):
@@ -171,7 +171,7 @@ def _leaf_signals (value):
         for element in value:
             out += _leaf_signals(element)
         return out
-    if isinstance(value, (Bundle, SimpleNamespace)):
+    if isinstance(value, SimpleNamespace):
         return [e for e in vars(value).values() if isinstance(e, Signal)]
     return []
 

@@ -9,7 +9,7 @@ import and nothing else:
 
     from isomorph import (block, signal, signals, enum, always_ff,
         always_comb, assign, concat, replicate, bits, struct,
-        interface, interfaces, attr, open_port, instances)
+        attr, open_port, instances)
 
 Python 3.11 or newer. pip. That is all.
 
@@ -138,7 +138,7 @@ drives a simulator.
 
     from isomorph import (block, signal, signals, enum, always_ff,
         always_comb, assign, concat, replicate, bits, struct,
-        interface, interfaces, attr, open_port, instances, main)
+        attr, open_port, instances, main)
 
     @block
     def add2 (i_a, i_b, o_sum, WIDTH = 4):
