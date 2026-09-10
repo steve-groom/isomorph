@@ -3,7 +3,7 @@ import os
 import sys
 
 from .signal import (signal, signals, vector, enum, struct,
-    attr, open_port, concat, replicate, bits, always_comb,
+    preload, attr, open_port, concat, replicate, bits, always_comb,
     always_ff, always_ff_async_reset, assign, instances, IsomorphError)
 from .elaborate import block, Elaborated
 from .analyse import analyse, fatal_warnings, ConversionError
@@ -16,7 +16,7 @@ from .execute import SimError
 from .sim import Simulator
 
 __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
-           'attr', 'open_port', 'concat',
+           'preload', 'attr', 'open_port', 'concat',
            'replicate', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',

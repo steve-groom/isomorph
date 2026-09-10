@@ -46,26 +46,29 @@ class Store:
             self._add(p.name, p.width, p.array, p.name in ff, p.kind, p.type)
         for s in module.signals:
             self._add(s.name, s.width, s.array, s.name in ff, s.kind,
-                      s.type)
+                      s.type, s.init)
         for inst in module.instances:
             child = by_name[inst.module]
             self.child[inst.name] = Store(child, by_name)
 
-    def _add (self, name, width, array, has_nxt, kind, typ):
+    def _add (self, name, width, array, has_nxt, kind, typ,
+              init = None):
         self.width[name] = width
         self.array[name] = array
         self.kind[name] = kind
         self.type[name] = typ
-        # every register powers up at zero, as the emitted HDL does
-        init = 0
+        # a register powers up at zero, as the emitted HDL does. A
+        # memory holds its image, because the HDL declaration carries
+        # the same one and the device is configured with it.
         if array:
-            self.v[name] = [init] * array
+            contents = list(init) if init else [0] * array
+            self.v[name] = contents
             if has_nxt:
-                self.nxt[name] = [init] * array
+                self.nxt[name] = list(contents)
         else:
-            self.v[name] = init
+            self.v[name] = 0
             if has_nxt:
-                self.nxt[name] = init
+                self.nxt[name] = 0
 
     def live_tuple (self):
         items = []

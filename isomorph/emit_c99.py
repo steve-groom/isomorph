@@ -390,6 +390,17 @@ def eval_tick_lines (m, by_name):
     lines.append(f'    memset(s, 0, sizeof(*s));')
     for inst in m.instances:
         lines.append(f'    {inst.module}_init(&s->{inst.name});')
+    # a memory image, the same values the HDL declaration carries
+    for sig in m.signals:
+        if not (sig.array and sig.init):
+            continue
+        cid = c_id(sig.name)
+        for index, value in enumerate(sig.init):
+            if value:
+                lines.append(f'    s->{cid}[{index}] = {value}ULL;')
+                if sig.name in ff:
+                    lines.append(f'    s->{cid}_nxt[{index}] = '
+                                 f'{value}ULL;')
     lines.append('}')
     lines.append('')
     lines.append(f'static void {m.name}_comb_once({m.name} *s)')

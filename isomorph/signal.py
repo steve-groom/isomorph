@@ -161,6 +161,8 @@ def signal (width = 1):
 class SignalArray(list):
     """signals(N, W): N signals of W bits, one array port or memory."""
 
+    init = None                 # contents at power-on, from preload()
+
     def __init__ (self, count, width):
         super().__init__(Signal(width, kind = 'bit' if width == 1
                                 else 'vector') for _ in range(count))
@@ -170,6 +172,42 @@ class SignalArray(list):
         self.line = _caller_line()
         for element in self:
             element.parent = self
+
+
+def preload (array, values):
+    """The contents a memory holds when the device is configured.
+
+    This is not the power-on value that signal() used to take and no
+    longer does. That one set a register in two simulators and in no
+    emitted HDL, which is a lie. This one is emitted: it becomes a
+    declaration initialiser in the SystemVerilog and in the VHDL, which
+    is how every FPGA tool loads a block RAM at configuration, and the
+    Python and C99 backends preload the same values. All four agree.
+
+    It is for a memory image: a boot ROM, a program, a lookup table. A
+    device that has to come up in a particular state still does that in
+    a reset branch, because a flip-flop is not configured, it is reset.
+
+        rom = signals(1024, 32)
+        preload(rom, [instruction(n) for n in range(1024)])
+    """
+    if not isinstance(array, SignalArray):
+        raise IsomorphError('preload() takes a signals() array, not '
+                            f'{array!r}')
+    values = [int(v) for v in values]
+    if len(values) != len(array):
+        raise IsomorphError(
+            f'preload(): {len(values)} values for an array of '
+            f'{len(array)}. A memory image is the whole memory, so pad '
+            'it or size the array to what you have.')
+    limit = 1 << array.width
+    for index, value in enumerate(values):
+        if not 0 <= value < limit:
+            raise IsomorphError(
+                f'preload(): {value} at index {index} does not fit in '
+                f'{array.width} bits')
+    array.init = values
+    return array
 
 
 def signals (count, width = 1, style = None):

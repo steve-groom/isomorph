@@ -2,6 +2,7 @@
 constants, enumerations, functions, processes, continuous assignments
 and child instances. Section 3.2, 3.8 and 4.1 of SPEC.txt."""
 import functools
+import hashlib
 import inspect
 import sys
 from types import FunctionType, SimpleNamespace
@@ -9,6 +10,24 @@ from types import FunctionType, SimpleNamespace
 from .signal import (Signal, SignalArray, EnumType, StructType,
     Process, Assign, Instances, OpenPort, IsomorphError,
     elaboration_stack, made_stack, note_made)
+
+
+def _name_part (value):
+    """One parameter value, as part of an identifier.
+
+    A number is itself. A string is not: a file path has slashes and
+    dots in it, and putting one in a module name makes an identifier no
+    language accepts and a filename that is a directory away from where
+    it was meant to go. A short digest keeps two different images in
+    two different modules without pretending the name is readable.
+    """
+    if isinstance(value, bool) or isinstance(value, int):
+        return str(value)
+    text = str(value)
+    if text.isidentifier():
+        return text
+    digest = hashlib.sha1(text.encode('utf-8')).hexdigest()[:8]
+    return digest
 
 
 class Elaborated:
@@ -128,7 +147,8 @@ class Elaborated:
         the defaults (4.1)."""
         defaults = {name: p.default for name, p in
                     inspect.signature(self.func).parameters.items()}
-        suffix = [f'{n}_{v}' for n, v in self.parameters.items()
+        suffix = [f'{n}_{_name_part(v)}' for n, v in
+                  self.parameters.items()
                   if defaults.get(n) is not v and defaults.get(n) != v]
         # Single underscore: VHDL forbids consecutive underscores, and
         # SPEC 4.5 keeps the same identifier in SV, VHDL and C99.

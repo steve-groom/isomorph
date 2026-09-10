@@ -177,6 +177,24 @@ def array_type_decl (tname, width, count):
     return (f'type {tname} is array (0 to {count - 1}) of {elem};')
 
 
+def array_init_vhdl (s):
+    """The contents of a memory, as a signal initial value.
+
+    Wrapped in synthesis translate directives nowhere: an initial value
+    on a signal is how VHDL says what a configured block RAM holds, and
+    every FPGA tool reads it."""
+    items = ', '.join(bit_string(v, s.width) for v in s.init)
+    return ' := (' + items + ')'
+
+
+def bit_string (value, width):
+    """A plain bit-string literal, which an initial value has to be."""
+    bits = format(int(value) & ((1 << width) - 1), f'0{width}b')
+    if width == 1:
+        return f"'{bits}'"
+    return f'"{bits}"'
+
+
 def width_parameter (params, width, locals = None):
     """The name of the parameter this width came from, or None.
 
@@ -580,7 +598,8 @@ def signal_lines (m):
         else:
             typ = sl_type(s.width, s.kind, s.type, m.parameters,
                           m.constants)
-        lines += trailing_lines(f'  signal {s.name} : {typ};',
+        tail = array_init_vhdl(s) if s.array and s.init else ''
+        lines += trailing_lines(f'  signal {s.name} : {typ}{tail};',
                                 s.trailing, 2)
     if lines:
         lines.append('')

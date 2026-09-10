@@ -561,12 +561,26 @@ def signal_lines (m):
         if s.attributes.get('unused'):
             lines.append('    /* verilator lint_off UNUSEDSIGNAL */')
         lines += attribute_lines(s.attributes, 4)
-        lines += trailing_lines(f'    {packed} {name};', s.trailing, 4)
+        tail = array_init_sv(s) if s.array and s.init else ''
+        lines += trailing_lines(f'    {packed} {name}{tail};',
+                                s.trailing, 4)
         if s.attributes.get('unused'):
             lines.append('    /* verilator lint_on UNUSEDSIGNAL */')
     if lines:
         lines.append('')
     return lines
+
+
+def array_init_sv (s):
+    """The contents of a memory, as a declaration initialiser.
+
+    An unpacked array takes an assignment pattern, and that is what
+    every FPGA tool reads to load a block RAM at configuration time. It
+    is not an initial block: SPEC 5.16 bans those for reset values, and
+    this is not a reset value, it is what the device is programmed
+    with."""
+    items = ', '.join(sv_const(v, s.width) for v in s.init)
+    return " = '{" + items + '}'
 
 
 def function_lines (m):
