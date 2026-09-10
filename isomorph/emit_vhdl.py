@@ -1242,7 +1242,13 @@ def vhdl_index (ctx, e):
         return (f'({vhdl_index(ctx, e.args[0])} {op} '
                 f'{vhdl_index(ctx, e.args[1])})')
     if e.op in ('bit', 'slice', 'part'):
-        return f'to_integer(unsigned({vhdl_expr(ctx, e)}))'
+        text = vhdl_expr(ctx, e)
+        if e.width == 1:
+            # one bit of a vector is a std_logic, and unsigned() takes
+            # a vector, so it has to be made a one-element one first.
+            # A byte lane picked by offset[1] * 16 lands here.
+            return f"to_integer(unsigned'('0' & {text}))"
+        return f'to_integer(unsigned({text}))'
     if e.width == 1:
         return f"to_integer(unsigned'('0' & {vhdl_expr(ctx, e)}))"
     return f'to_integer(unsigned({vhdl_expr(ctx, e)}))'
