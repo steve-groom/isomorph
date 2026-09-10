@@ -490,7 +490,9 @@ def eval_tick_lines (m, by_name):
             lines.append(f'    s->{cid} = s->{cid}_nxt;')
     for inst in m.instances:
         child = by_name.get(inst.module)
-        if child is not None and any(p.kind == 'ff' for p in child.processes):
+        # a child with no flip-flop of its own may hold one further
+        # down, and its pending values still have to be committed
+        if child is not None and hierarchy_clocks(child, by_name):
             lines.append(f'    {inst.module}_commit(&s->{inst.name});')
     lines.append('}')
     lines.append('')
@@ -573,16 +575,34 @@ def hierarchy_clocks (m, by_name):
         child = by_name.get(inst.module)
         if child is None:
             continue
-        inner = set(hierarchy_clocks(child, by_name))
+        inner = hierarchy_clocks(child, by_name)
         for formal, actual in inst.ports.items():
             if actual is None or getattr(actual, 'op', None) != 'ref':
                 continue
-            if (formal in inner) and (actual.value not in out):
-                out.append(actual.value)
+            for name in inner:
+                outer = outer_clock(formal, actual.value, name)
+                if outer is not None and outer not in out:
+                    out.append(outer)
     return out
 
 
-def map_inst_clock (inst, child, parent_clock):
+def outer_clock (formal, actual, inner):
+    """What the parent calls a clock the child calls `inner`, or None.
+
+    A clock port may be one entry of an array: a PLL monitor takes every
+    PLL output as pll0_i_clocks and clocks each domain on its own
+    entry, so the name inside is pll0_i_clocks[0] while the port is
+    pll0_i_clocks. Matching the two as plain strings missed it, the
+    parent grew no such domain, and the whole reset synchroniser it
+    contains never had an edge in either smoke backend."""
+    if inner == formal:
+        return actual
+    if inner.startswith(formal + '['):
+        return actual + inner[len(formal):]
+    return None
+
+
+def map_inst_clock (inst, child, parent_clock, by_name):
     """The child's own name for a clock the parent drives, or None.
 
     Matched by connection and never by name. A child is clocked on the
@@ -593,17 +613,26 @@ def map_inst_clock (inst, child, parent_clock):
     synchroniser's own clock port is also called i_clock, and a
     crossing then propagated in one edge instead of two. Verilator got
     it right and the two smoke backends did not.
+
+    The connection is what makes that safe, and asking as well for a
+    flip-flop in the child's own processes was one step too far. A
+    board's peripheral block, or the wrapper that shares a set of SPI
+    wires, holds no flip-flop of its own: it decodes, and everything
+    clocked is an instance inside it. Those stopped the clock dead, so
+    a whole subtree never had an edge, and only in a design with more
+    than one clock, because a single-clock tick() passes no name and
+    fires everything. What matters is that the child clocks on that
+    port somewhere below it, which is what hierarchy_clocks answers.
     """
     if child is None or parent_clock is None:
         return None
+    inner = hierarchy_clocks(child, by_name)
     for formal, actual in inst.ports.items():
-        if actual is None:
+        if actual is None or getattr(actual, 'op', None) != 'ref':
             continue
-        if (getattr(actual, 'op', None) == 'ref'
-                and actual.value == parent_clock):
-            if any(p.kind == 'ff' and p.clock == formal
-                   for p in child.processes):
-                return formal
+        for name in inner:
+            if outer_clock(formal, actual.value, name) == parent_clock:
+                return name
     return None
 
 
@@ -622,13 +651,15 @@ def posedge_lines (m, by_name, clock):
         if child is None:
             continue
         if clock is None:
-            if any(p.kind == 'ff' for p in child.processes):
+            # a child with no flip-flop of its own may still hold one
+            # further down, so ask the hierarchy and not the module
+            if hierarchy_clocks(child, by_name):
                 lines.append(f'    {inst.module}_posedge(&s->{inst.name});')
             continue
-        mapped = map_inst_clock(inst, child, clock)
+        mapped = map_inst_clock(inst, child, clock, by_name)
         if mapped:
-            lines.append(f'    {inst.module}_posedge_{mapped}('
-                         f'&s->{inst.name});')
+            lines.append(f'    {inst.module}_posedge_'
+                         f'{clock_id(mapped)}(&s->{inst.name});')
     lines.append('}')
     lines.append('')
     return lines
@@ -670,17 +701,41 @@ def live_cmp_field (name, array):
     ]
 
 
+def array_copy (dst, src, count, width):
+    """One array port across an instance boundary, entry by entry.
+
+    A port may be an array: a PLL monitor takes every PLL output clock as
+    one and gives back one reset for each. A whole array is not a value
+    in C, so copying it the way a scalar port is copied emitted
+    `s->child.port = s->signal & mask`, which does not compile, and the
+    same port in the Python simulator was skipped and carried nothing
+    at all. Neither backend could instantiate a block with an array
+    port until this.
+    """
+    lines = [f'    for (int _i = 0; _i < {count}; _i++) {{']
+    lines.append(f'        {dst}[_i] = {src}[_i] & {mask_expr(width)};')
+    lines.append('    }')
+    return lines
+
+
 def instance_copy_in (m, inst, by_name):
     child = by_name.get(inst.module)
     if child is None:
         return []
     directions = {p.name: p.direction for p in child.ports}
+    arrays = {p.name: p.array for p in child.ports}
+    widths = {p.name: p.width for p in child.ports}
     lines = []
     ctx = Ctx(m, set())
     for formal, actual in inst.ports.items():
         if actual is None:
             continue
         if directions.get(formal) == 'out':
+            continue
+        if arrays.get(formal):
+            lines += array_copy(f's->{inst.name}.{c_id(formal)}',
+                                c_expr(ctx, actual, lhs = True),
+                                arrays[formal], widths[formal])
             continue
         lines.append(
             f'    s->{inst.name}.{c_id(formal)} = '
@@ -693,6 +748,7 @@ def instance_copy_out (m, inst, by_name):
     if child is None:
         return []
     directions = {p.name: p.direction for p in child.ports}
+    arrays = {p.name: p.array for p in child.ports}
     widths = {p.name: p.width for p in child.ports}
     lines = []
     ctx = Ctx(m, set())
@@ -703,6 +759,10 @@ def instance_copy_out (m, inst, by_name):
             continue
         tgt = c_expr(ctx, actual, lhs = True)
         w = widths.get(formal, actual.width)
+        if arrays.get(formal):
+            lines += array_copy(tgt, f's->{inst.name}.{c_id(formal)}',
+                                arrays[formal], w)
+            continue
         lines.append(
             f'    {tgt} = s->{inst.name}.{c_id(formal)} & {mask_expr(w)};')
     return lines

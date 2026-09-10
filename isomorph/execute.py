@@ -5,7 +5,8 @@ tick() is eval, posedge, NBA commit, eval. Combinational loops that
 do not settle in SETTLE_LIMIT passes are an error.
 """
 from . import ir
-from .emit_c99 import SETTLE_LIMIT, ff_driven_names
+from .emit_c99 import (SETTLE_LIMIT, ff_driven_names,
+                       hierarchy_clocks, outer_clock)
 from .signal import IsomorphError
 
 
@@ -245,24 +246,22 @@ class Executor:
     def _map_clock (self, store, inst, parent_clock):
         """The child's own name for a clock the parent drives, or None.
 
-        Matched by connection and never by name. A child is clocked on
-        the parent's edge only when one of its clock ports is really
-        wired to that parent clock. Falling back to "the child has a
-        process on a port that happens to be called the same thing"
-        clocked every a synchroniser chain in a PLL monitor on the parent's
-        i_clock, because a synchroniser's own clock port is also called
-        i_clock, and a crossing then propagated in one edge instead of
-        two. Verilator got it right and the two smoke backends did not.
+        Matched by connection and never by name, and the child has to
+        clock on that port somewhere below it. See map_inst_clock in
+        emit_c99, which is the same rule for the same reason: the
+        connection is what stops a synchroniser being clocked on its
+        parent's edge, and asking as well for a flip-flop in the
+        child's own processes stopped the clock at every block that
+        only decodes and passes it on.
         """
         child = store.child[inst.name]
+        inner = hierarchy_clocks(child.m, self.by_name)
         for formal, actual in inst.ports.items():
-            if actual is None:
+            if actual is None or getattr(actual, 'op', None) != 'ref':
                 continue
-            if (getattr(actual, 'op', None) == 'ref'
-                    and actual.value == parent_clock):
-                if any(p.kind == 'ff' and p.clock == formal
-                       for p in child.m.processes):
-                    return formal
+            for name in inner:
+                if outer_clock(formal, actual.value, name) == parent_clock:
+                    return name
         return None
 
     def _commit_store (self, store, clock):
@@ -285,6 +284,12 @@ class Executor:
             val = eval_expr(ctx, actual)
             w = widths.get(formal, actual.width)
             if isinstance(child.v.get(formal), list):
+                # an array port carries every entry, not nothing: see
+                # array_copy in emit_c99 for what this used to cost
+                if isinstance(val, list):
+                    into = child.v[formal]
+                    for i in range(min(len(val), len(into))):
+                        into[i] = int(val[i]) & mask(w)
                 continue
             child.v[formal] = int(val) & mask(w)
 
@@ -297,6 +302,12 @@ class Executor:
                 continue
             val = child.v[formal]
             if isinstance(val, list):
+                base = getattr(actual, 'value', None)
+                if (getattr(actual, 'op', None) == 'ref'
+                        and isinstance(store.v.get(base), list)):
+                    into = store.v[base]
+                    for i in range(min(len(val), len(into))):
+                        into[i] = val[i]
                 continue
             assign_target(ctx, actual, val)
 

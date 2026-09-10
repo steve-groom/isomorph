@@ -211,8 +211,15 @@ class Analyser:
                                dict(value.attributes)))
         elif isinstance(value, SignalArray):
             pname = self.name_of(value)
-            direction = 'out' if any(self.name_of(s) in self.driven
-                                     for s in value) else 'in'
+            # an instance drives a whole array under its own name and
+            # a process drives one entry under an indexed one, so an
+            # array port is an output if either says so. Looking only
+            # for the entries made a board's array output an input,
+            # and the instance below it was assigning to it
+            driven = (pname in self.driven
+                      or any(self.name_of(s) in self.driven
+                             for s in value))
+            direction = 'out' if driven else 'in'
             out.append(ir.Port(pname, value.width, direction, 'vector', None,
                                len(value)))
         elif isinstance(value, SimpleNamespace):

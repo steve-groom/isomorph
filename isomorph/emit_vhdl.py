@@ -168,8 +168,16 @@ def emit_package (modules):
 
 
 def array_type_name (name, width, count):
-    base = name.split('[')[0]
-    return f'{base}_t'
+    """The type of an array, named for its shape and not its signal.
+
+    VHDL types are matched by name, so naming one after the signal
+    that happens to declare it makes two arrays of the same shape two
+    types, and a port map between them will not compile. a PLL monitor
+    takes pll0_i_clocks and a board hands it pll0_clocks: the same one
+    entry of one bit, and ghdl refused the connection. Shape is what a
+    type is, so shape is what it is called."""
+    element = 'bit' if width == 1 else f'slv{width}'
+    return f'iso_{element}_array{count}_t'
 
 
 def array_type_decl (tname, width, count):
