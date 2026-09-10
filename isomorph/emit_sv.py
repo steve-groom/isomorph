@@ -363,13 +363,22 @@ def item_lines (m):
 
 def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
-    lines.append(f'    {inst.module} {inst.name} (')
     formals = list(inst.ports.items())
+    # an output the parent does not want is open_port(), which is the
+    # designer saying so. Verilator flags every empty connection under
+    # -Wall, so the waiver goes with the instance that has one rather
+    # than leaving --lint to be turned off
+    open_ports = [f for f, a in formals if a is None]
+    if open_ports:
+        lines.append('    /* verilator lint_off PINCONNECTEMPTY */')
+    lines.append(f'    {inst.module} {inst.name} (')
     for i, (formal, actual) in enumerate(formals):
         comma = ',' if i < len(formals) - 1 else ''
         mapped = sv_expr(actual) if actual is not None else ''
         lines.append(f'        .{formal}({mapped}){comma}')
     lines.append('    );')
+    if open_ports:
+        lines.append('    /* verilator lint_on PINCONNECTEMPTY */')
     return lines
 
 

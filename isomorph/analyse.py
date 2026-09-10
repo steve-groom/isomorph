@@ -267,9 +267,22 @@ class Analyser:
             claim(p.name, 'port', None)
         for s in m.signals:
             claim(s.name, 'signal', s.line)
+        # an enum member is a name in the module, not inside its own
+        # type, in both languages: two state machines that both have a
+        # RESET are a duplicate declaration, not two scopes
+        member_of = {}
         for name, enum_type in m.enums.items():
             claim(name, 'type', getattr(enum_type, 'line', None))
             for member in enum_type.members:
+                owner = member_of.get(member.name)
+                if owner is not None and owner != name:
+                    raise ConversionError(
+                        f'{member.name} is a member of both {owner} and '
+                        f'{name}. An enumeration member is a name in the '
+                        f'module, so the two collide; give one of them a '
+                        f'prefix (SPEC 4.5)',
+                        self.file, getattr(enum_type, 'line', None))
+                member_of[member.name] = name
                 claim(member.name, 'enumeration',
                       getattr(enum_type, 'line', None))
         for name in m.constants:
