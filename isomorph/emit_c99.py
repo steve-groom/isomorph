@@ -315,19 +315,35 @@ def enum_defines (m, seen):
     return lines
 
 
+def const_macro (module_name, name):
+    """One module constant or int parameter, as a C macro name.
+
+    Qualified by the module for the same reason an enum member is: a
+    define is global and a module constant is not. a peripheral
+    calls the first character of its identifier ID_BYTE_0 and so does
+    one peripheral, one of them 'R' and the other 'C', and the first
+    define won. The widths still came from the right module, so
+    one peripheral's VERSION of 1 was read as its neighbour's 2 masked
+    to one bit, which is 0. Nothing failed to compile and only the C99
+    backend was wrong."""
+    return f'{module_name}__{name}'
+
+
 def const_defines (m, seen):
     lines = []
     for name, value in m.constants.items():
-        if name in seen:
+        macro = const_macro(m.name, name)
+        if macro in seen:
             continue
-        seen.add(name)
-        lines.append(f'#define {name} {int(value)}ULL')
+        seen.add(macro)
+        lines.append(f'#define {macro} {int(value)}ULL')
     for name, value in m.parameters.items():
         if isinstance(value, int) and not isinstance(value, bool):
-            if name in seen:
+            macro = const_macro(m.name, name)
+            if macro in seen:
                 continue
-            seen.add(name)
-            lines.append(f'#define {name} {int(value)}ULL')
+            seen.add(macro)
+            lines.append(f'#define {macro} {int(value)}ULL')
     if lines:
         lines.append('')
     return lines
@@ -916,8 +932,10 @@ def c_expr (ctx, e, lhs = False, index = False):
 
 
 def c_ref (ctx, name, lhs):
-    if name in ctx.locals or name in ctx.loop_vars or name in ctx.int_names:
+    if name in ctx.locals or name in ctx.loop_vars:
         return name
+    if name in ctx.int_names:
+        return const_macro(ctx.m.name, name)
     nxt = lhs and ctx.ff_write and root_plain(name) in ctx.ff_names
     cid = c_id(name)
     if '[' in cid and not cid.startswith('s->'):
@@ -952,8 +970,10 @@ def c_bit (ctx, e, lhs):
 def c_index (ctx, e):
     if e.op == 'const':
         return str(int(e.value))
-    if e.op == 'ref' and e.value in ctx.int_names | ctx.loop_vars:
+    if e.op == 'ref' and e.value in ctx.loop_vars:
         return e.value
+    if e.op == 'ref' and e.value in ctx.int_names:
+        return const_macro(ctx.m.name, e.value)
     if e.op == 'binop':
         return (f'({c_index(ctx, e.args[0])} {e.value} '
                 f'{c_index(ctx, e.args[1])})')
