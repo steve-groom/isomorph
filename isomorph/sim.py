@@ -586,7 +586,7 @@ def _ctype_fields (name, array, has_nxt):
     typ = (c_uint64 * array) if array else c_uint64
     out = [(name, typ)]
     if has_nxt:
-        out.append((name + '_nxt', typ))
+        out.append((name + '__nxt', typ))
     return out
 
 

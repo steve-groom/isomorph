@@ -5,6 +5,7 @@ SystemVerilog, VHDL and the C99 smoke. Convert checks all of them on
 every run, even if only one output is requested. A clash is an error,
 not a silent rename.
 """
+import re
 
 
 # IEEE 1076 reserved words; VHDL matching is case-insensitive.
@@ -63,11 +64,24 @@ C99_RESERVED = set('''
 '''.split())
 
 
+IDENTIFIER = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
+
+
 def clash_message (name):
-    """Error text if name is reserved, else None."""
+    """Error text if name is reserved or not an identifier in every
+    output, else None."""
     if not name:
         return None
     base = name.split('[')[0]
+    if (not IDENTIFIER.fullmatch(base) or '__' in base
+            or base.endswith('_')):
+        # VHDL: a letter first, no two underscores together, none at
+        # the end. The C99 smoke also keeps the double underscore for
+        # itself, as the shadow a register's next value sits in
+        return (f'{base} is not a legal VHDL identifier: a name starts '
+                'with a letter and has no double or trailing underscore; '
+                'isomorph names must be legal in SystemVerilog, VHDL and '
+                'C99 (SPEC 4.5)')
     if base.lower() in VHDL_RESERVED:
         return (f'{base} is a VHDL reserved word; isomorph names must '
                 'be legal in SystemVerilog, VHDL and C99 (SPEC 4.5)')

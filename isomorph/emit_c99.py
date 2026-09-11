@@ -2,7 +2,9 @@
 
 One struct per module, one function per process, uint64_t fields
 masked to width. tick() settles comb, runs clocked processes into
-*_nxt, commits, settles comb again. Not the design of record.
+*__nxt, commits, settles comb again. Not the design of record.
+The shadow has two underscores so that it can never be a name from the
+Python: VHDL forbids those, and convert refuses them (SPEC 4.5).
 """
 import os
 import shutil
@@ -146,11 +148,11 @@ def field_lines (name, width, array, has_nxt):
         decl = f'    uint64_t {c_id(name)}[{array}];'
         lines = [decl]
         if has_nxt:
-            lines.append(f'    uint64_t {c_id(name)}_nxt[{array}];')
+            lines.append(f'    uint64_t {c_id(name)}__nxt[{array}];')
         return lines
     lines = [f'    uint64_t {c_id(name)};']
     if has_nxt:
-        lines.append(f'    uint64_t {c_id(name)}_nxt;')
+        lines.append(f'    uint64_t {c_id(name)}__nxt;')
     return lines
 
 
@@ -402,10 +404,10 @@ def async_reset_fn_lines (m, p, ctx):
         port = next((x for x in m.ports if x.name == name), None)
         arr = (sig.array if sig else (port.array if port else 0))
         if arr:
-            lines.append(f'    memcpy(s->{cid}_nxt, s->{cid}, '
+            lines.append(f'    memcpy(s->{cid}__nxt, s->{cid}, '
                          f'sizeof(s->{cid}));')
         else:
-            lines.append(f'    s->{cid}_nxt = s->{cid};')
+            lines.append(f'    s->{cid}__nxt = s->{cid};')
     lines.append('}')
     lines.append('')
     return lines
@@ -428,7 +430,7 @@ def eval_tick_lines (m, by_name):
             if value:
                 lines.append(f'    s->{cid}[{index}] = {value}ULL;')
                 if sig.name in ff:
-                    lines.append(f'    s->{cid}_nxt[{index}] = '
+                    lines.append(f'    s->{cid}__nxt[{index}] = '
                                  f'{value}ULL;')
     lines.append('}')
     lines.append('')
@@ -484,10 +486,10 @@ def eval_tick_lines (m, by_name):
         port = next((x for x in m.ports if x.name == name), None)
         arr = (sig.array if sig else (port.array if port else 0))
         if arr:
-            lines.append(f'    memcpy(s->{cid}, s->{cid}_nxt, '
+            lines.append(f'    memcpy(s->{cid}, s->{cid}__nxt, '
                          f'sizeof(s->{cid}));')
         else:
-            lines.append(f'    s->{cid} = s->{cid}_nxt;')
+            lines.append(f'    s->{cid} = s->{cid}__nxt;')
     for inst in m.instances:
         child = by_name.get(inst.module)
         # a child with no flip-flop of its own may hold one further
@@ -1043,9 +1045,9 @@ def c_ref (ctx, name, lhs):
         # mem[2] stored as field mem
         base = cid.split('[', 1)[0]
         idx = cid.split('[', 1)[1][:-1]
-        field = f'{base}_nxt' if nxt else base
+        field = f'{base}__nxt' if nxt else base
         return f's->{field}[{idx}]'
-    field = cid + ('_nxt' if nxt else '')
+    field = cid + ('__nxt' if nxt else '')
     return f's->{field}'
 
 
