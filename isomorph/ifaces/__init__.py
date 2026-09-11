@@ -9,8 +9,9 @@ from .uart import uart
 from .config import config
 from .cpu import cpu_control
 from .memory import device_sdram, hyperram
+from .ram import ram_read, ram_write
 
 __all__ = ['avalon_mm', 'avalon_st', 'wishbone', 'axi4_lite', 'stream',
            'spi', 'spim', 'spis', 'spis_tri',
            'gpio', 'irq', 'i2c', 'uart', 'config', 'cpu_control',
-           'device_sdram', 'hyperram']
+           'device_sdram', 'hyperram', 'ram_read', 'ram_write']

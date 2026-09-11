@@ -5,6 +5,7 @@ process decorators record a Python function for the analyser to read as
 an AST; assign() records an expression the same way. Section 3 of
 SPEC.txt is the reference."""
 import sys
+from types import SimpleNamespace
 
 
 class IsomorphError(Exception):
@@ -370,6 +371,30 @@ def assign (target, expression):
     return a
 
 
+def _reachable (value, kept, depth = 0):
+    """Everything a block-local name still holds on to.
+
+    A list of instances is one legitimate way to hold several under
+    one name, and a namespace is the other: the one pipeline() returns
+    holds instances and the link bundles between them, and a bundle
+    holds signals. Those are walked, to a depth no design reaches.
+    Anything else with attributes is looked in one level, as before,
+    and no further, because a function or a module has attributes too
+    and nobody wants them walked."""
+    kept.add(id(value))
+    if depth > 8:
+        return
+    if isinstance(value, (list, tuple)):
+        for element in value:
+            _reachable(element, kept, depth + 1)
+    elif isinstance(value, SimpleNamespace):
+        for element in vars(value).values():
+            _reachable(element, kept, depth + 1)
+    elif depth == 0 and hasattr(value, '__dict__'):
+        for element in vars(value).values():
+            kept.add(id(element))
+
+
 class Instances:
     """What instances() returns: a snapshot of the block's locals."""
 
@@ -390,15 +415,7 @@ def instances ():
     if made_stack:
         kept = set()
         for value in frame_locals.values():
-            kept.add(id(value))
-            # a list of instances is the one legitimate way to hold
-            # several under one name, so look inside one
-            if isinstance(value, (list, tuple)):
-                for element in value:
-                    kept.add(id(element))
-            elif hasattr(value, '__dict__'):
-                for element in vars(value).values():
-                    kept.add(id(element))
+            _reachable(value, kept)
         lost = [t for t in made_stack[-1] if id(t) not in kept]
         if lost:
             what = []
