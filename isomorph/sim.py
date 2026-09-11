@@ -9,7 +9,7 @@ from ctypes import (POINTER, Structure, c_int, c_uint64, c_char_p, CDLL,
 from .analyse import analyse
 from .elaborate import Elaborated
 from .emit_c99 import (ff_driven_names, module_clocks, clock_id,
-                       hierarchy_clocks, write_c99)
+                       hierarchy_clocks, write_c99, alias_source)
 from .execute import Executor, SimError, split_index
 from .signal import IsomorphError, Signal
 from .vcd import VcdWriter
@@ -43,16 +43,21 @@ class Simulator:
         self.timescale = '1 ns'
         self.time = 0
         self.cycle = 0
-        self.clock_name = _default_clock(self.modules)
         # every clock the design has, whether or not add_clock has been
         # called for it. The guard in tick() is about the design, not
         # about what the bench has got round to registering.
         self.domains = hierarchy_clocks(self.top, self.by_name)
+        self.clock_name = _default_clock(self.domains, self.modules)
         self.clocks = {}
         self._next_edge = {}        # per clock, when its next edge is due
         self.vcd = None
         self.traces = None
         self._vcd_wires = []
+        # the clock wave is drawn rather than sampled; see _falls()
+        self._vcd_clocks = []       # (wire, the clock it shows)
+        self._clock_value = {}      # clock -> what the wave is now
+        self._clock_fall = {}       # clock -> when it goes low again
+        self._fired_now = []        # clocks that took this edge
         self.log_fp = None
         self.log_last = {}
         self._python = None
@@ -160,6 +165,7 @@ class Simulator:
                 self._native.clock_group(names)
             self.cycle += 1
             self.time += self._period(names[0])
+            self._fired_now = list(names)
             self._dump()
             return
         self._run_checks('edge')
@@ -170,6 +176,7 @@ class Simulator:
             self._native.clock(clk)
         self.cycle += 1
         self.time += self._period(clk or self.clock_name)
+        self._fired_now = [clk or self.clock_name]
         self._dump()
 
     def tick (self, n = 1, clock = None):
@@ -201,6 +208,7 @@ class Simulator:
                 self._native.clock(clk)
             self.cycle += 1
             self.time += self._period(clk or self.clock_name)
+            self._fired_now = [clk or self.clock_name]
             self._dump()
 
     def run (self, duration = None, ticks = None):
@@ -258,6 +266,7 @@ class Simulator:
             self._native.clock_group(group)
         self.cycle += 1
         self.time = t
+        self._fired_now = list(group)
         self._dump()
 
     def write_events (self, path):
@@ -301,6 +310,8 @@ class Simulator:
 
     def close (self):
         if self.vcd is not None:
+            if self._clock_fall:
+                self._falls(max(self._clock_fall.values()) + 1)
             self.vcd.close()
             self.vcd = None
         if self.log_fp is not None:
@@ -317,42 +328,97 @@ class Simulator:
             return name
         raise SimError(f'cannot use {key!r} as a signal name')
 
-    def _define_scope (self, module, prefix):
+    def _define_scope (self, module, prefix, clock_of = None):
+        """clock_of maps a name in this module to the design's clock it
+        carries, so a child's i_clock is drawn as the parent's."""
+        if clock_of is None:
+            clock_of = {name: name for name in self.domains}
         for p in module.ports:
-            self._define_field(prefix, p.name, p.width, p.array)
+            self._define_field(prefix, p.name, p.width, p.array,
+                               clock_of.get(p.name))
         for s in module.signals:
-            self._define_field(prefix, s.name, s.width, s.array)
+            self._define_field(prefix, s.name, s.width, s.array,
+                               clock_of.get(s.name))
         for inst in module.instances:
+            child = self.by_name[inst.module]
+            inner = {}
+            for formal, actual in inst.ports.items():
+                if actual is None or getattr(actual, 'op', None) != 'ref':
+                    continue
+                outer = alias_source(module, actual.value)
+                if outer in clock_of:
+                    inner[formal] = clock_of[outer]
+                elif actual.value in clock_of:
+                    inner[formal] = clock_of[actual.value]
             self.vcd.push_scope(inst.name)
-            self._define_scope(self.by_name[inst.module],
-                               f'{prefix}{inst.name}.')
+            self._define_scope(child, f'{prefix}{inst.name}.', inner)
             self.vcd.pop_scope()
 
-    def _define_field (self, prefix, name, width, array):
+    def _define_field (self, prefix, name, width, array, clock = None):
         if array:
             for i in range(array):
                 self._define_one(prefix, f'{name}[{i}]', width)
         else:
-            self._define_one(prefix, name, width)
+            self._define_one(prefix, name, width, clock)
 
-    def _define_one (self, prefix, name, width):
+    def _define_one (self, prefix, name, width, clock = None):
         hier = prefix + name
         if not _wanted(hier, self.traces):
             return
         ident = self.vcd.wire(name, width)
         self._vcd_wires.append((ident, hier, width))
+        if clock is not None:
+            self._vcd_clocks.append((ident, clock))
 
     def _dump (self):
         if self.vcd is not None:
+            self._falls(self.time)
+            for c in self._fired_now:
+                self._clock_value[c] = 1
+                half = self._period(c) // 2
+                if half >= 1:
+                    self._clock_fall[c] = self.time + half
             self.vcd.time(self.time)
             self._vcd_emit()
         if self.log_fp is not None:
             self._log_emit()
+        self._fired_now = []
+
+    def _falls (self, until):
+        """Take each clock low again half a period after its edge.
+
+        The model has no clock net. tick() runs the clocked processes
+        and commits them; it never toggles a pin, and set() on a clock
+        is refused, because a pin that moved on Verilator and not on
+        the other two is how the three backends stop agreeing.
+
+        A waveform still needs the wave, and nothing has to be
+        invented to draw one: the simulator knows the instant of every
+        edge it took and the period add_clock gave that clock. So the
+        trace is high at each edge and low half a period later. Every
+        rising edge in the file is a cycle the model really ran, which
+        is the only claim it makes.
+        """
+        while True:
+            due = [(t, c) for c, t in self._clock_fall.items() if t < until]
+            if not due:
+                return
+            t, c = min(due)
+            del self._clock_fall[c]
+            self._clock_value[c] = 0
+            self.vcd.time(t)
+            for ident, clock in self._vcd_clocks:
+                if clock == c:
+                    self.vcd.change(ident, 0, 1)
 
     def _vcd_emit (self):
         values = {hier: value for hier, width, value in self._live()}
+        drawn = dict(self._vcd_clocks)
         for ident, hier, width in self._vcd_wires:
-            if hier in values:
+            if ident in drawn:
+                self.vcd.change(ident,
+                                self._clock_value.get(drawn[ident], 0), 1)
+            elif hier in values:
                 self.vcd.change(ident, values[hier], width)
 
     def _log_emit (self):
@@ -389,17 +455,26 @@ def _wanted (hier, traces):
     return False
 
 
-def _default_clock (modules):
-    clocks = []
-    seen = set()
+def _default_clock (domains, modules):
+    """The clock a bench means when it names none.
+
+    It has to be a clock of the top block. This used to walk every
+    module in the hierarchy, leaves first, and take the first flop's
+    clock it found, which in any design with a clocked child is the
+    child's port name: a cpu_core whose own clock is i_clock0 took
+    i_clock from the a multiply step inside it. Nothing raised, because a
+    period registered under a name no top-level clock has still falls
+    back to the default period, so add_clock kept working and only
+    something that had to match the name up with a real clock - the
+    VCD's clock trace - could tell.
+    """
+    if domains:
+        return domains[0]
     for m in modules:
         for p in m.processes:
-            if p.kind == 'ff' and p.clock and p.clock not in seen:
-                seen.add(p.clock)
-                clocks.append(p.clock)
-    if len(clocks) == 1:
-        return clocks[0]
-    return clocks[0] if clocks else None
+            if p.kind == 'ff' and p.clock:
+                return p.clock
+    return None
 
 
 class C99Backend:
