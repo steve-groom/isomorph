@@ -25,6 +25,17 @@ __all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
            'main']
 
 
+def report_lint (text):
+    """What the linter said, put in front of you.
+
+    A warning is not a failure to ghdl or to verilator, but a vendor
+    tool may well make it an error -- a literal past the end of
+    integer is one -- so it is printed rather than dropped."""
+    for line in (text or '').splitlines():
+        if line.strip():
+            print(line)
+
+
 def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
              allow_severe = False, lint = False, outdir = 'build',
              json = None):
@@ -111,25 +122,27 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
                                      os.path.join(outdir, top_name))
             wrote += written
             if lint:
-                lint_sv([p for p in written if p.endswith('.sv')],
-                        top = top_name)
+                report_lint(
+                    lint_sv([p for p in written if p.endswith('.sv')],
+                            top = top_name))
         else:
             write_sv(modules, sv_path)
             wrote.append(sv_path)
             if lint:
-                lint_sv(sv_path, top = top_name)
+                report_lint(lint_sv(sv_path, top = top_name))
     if want_vhdl:
         if vhdl_path is None:
             written = write_vhdl_files(modules,
                                        os.path.join(outdir, top_name))
             wrote += written
             if lint:
-                lint_vhdl([p for p in written if p.endswith('.vhd')])
+                report_lint(
+                    lint_vhdl([p for p in written if p.endswith('.vhd')]))
         else:
             write_vhdl(modules, vhdl_path)
             wrote.append(vhdl_path)
             if lint:
-                lint_vhdl(vhdl_path)
+                report_lint(lint_vhdl(vhdl_path))
     if want_c99:
         if c99_path is None:
             os.makedirs(outdir, exist_ok = True)

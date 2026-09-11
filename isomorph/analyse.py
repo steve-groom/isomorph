@@ -693,6 +693,14 @@ class Analyser:
                            f'{width} bits')
             value.width = width
             return value
+        if value.op == 'ref':
+            number = self.number(value)
+            if number is not None:
+                if min_width(number) > width:
+                    self.error(node, f'{value.value} is {number}, which does '
+                               f'not fit in {width} bits')
+                value.width = width
+                return value
         if value.width > width:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
@@ -882,17 +890,44 @@ class Analyser:
             return self.call(node, scope)
         self.error(node, f'expression {type(node).__name__} not supported')
 
+    def number (self, e):
+        """The value behind an expression that is a plain number: a
+        literal, a block constant, or a parameter. None if it is not
+        one.
+
+        All three are unsized and take the width of the place they are
+        used. Padding a parameter out to a width its value happened to
+        need would make two builds of a block differ in nothing but the
+        padding, and that is two modules in the emitted HDL where the
+        source says one."""
+        if e.op == 'const' and e.value is not None:
+            return e.value
+        if e.op == 'ref':
+            value = self.e.parameters.get(
+                e.value, self.e.constants.get(e.value))
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
     def context (self, a, b, node):
-        """Give an unsized constant the width of its partner (4.2)."""
-        if a.op == 'const' and b.op != 'const':
-            if min_width(a.value) > b.width:
-                self.error(node, f'constant {a.value} wider than '
+        """Give an unsized number the width of its partner (4.2)."""
+        a_number = self.number(a)
+        b_number = self.number(b)
+        if a_number is not None and b_number is not None:
+            # two numbers: neither has a width of its own, so they take
+            # the wider of what they need and nothing is padded
+            width = max(a.width, b.width)
+            a.width = width
+            b.width = width
+        elif a_number is not None:
+            if min_width(a_number) > b.width:
+                self.error(node, f'constant {a_number} wider than '
                            f'{b.width}-bit '
                            'operand')
             a.width = b.width
-        elif b.op == 'const' and a.op != 'const':
-            if min_width(b.value) > a.width:
-                self.error(node, f'constant {b.value} wider than '
+        elif b_number is not None:
+            if min_width(b_number) > a.width:
+                self.error(node, f'constant {b_number} wider than '
                            f'{a.width}-bit '
                            'operand')
             b.width = a.width

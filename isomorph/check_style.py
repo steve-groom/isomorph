@@ -11,11 +11,14 @@ else can be repaired without deciding something.
   - a section bar ends exactly at column 79
   - no tabs, no trailing whitespace, ASCII only
   - a file ends with exactly one newline
+  - no default painted on a register in a clocked process and then
+    overridden
 
 This is the layout half of HOUSE_STYLE.md. The rules the converter
 enforces, and the ones only a person can, are in that document; these
 are the ones a machine can settle on its own, so it does.
 """
+import ast
 import os
 import re
 import sys
@@ -28,6 +31,73 @@ BAR = re.compile(r'^(\s*)#(-+)\s*$')
 # myhdl holds frozen MyHDL sources kept as a reference for a migration,
 # and reformatting those would lose the thing they are kept for.
 SKIP = ('__pycache__', 'vendor_models', 'myhdl', 'build', '.git')
+
+
+def driven (node):
+    """The name a `<something>.next = ...` target assigns, or None."""
+    if not isinstance(node, ast.Attribute) or node.attr != 'next':
+        return None
+    return ast.unparse(node.value)
+
+
+def assigned_under (nodes):
+    """Every register assigned anywhere beneath these statements."""
+    found = set()
+    for node in nodes:
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Assign):
+                for target in inner.targets:
+                    name = driven(target)
+                    if name is not None:
+                        found.add(name)
+    return found
+
+
+def clocked (func):
+    return any('always_ff' in ast.unparse(d) for d in func.decorator_list)
+
+
+def painted (body, process, found):
+    """Registers given a value here that something later overrides.
+
+    In a clocked process every assignment is a register write, so a
+    value written and then written again in the same clock is the
+    first one thrown away: the reader has to carry the whole block in
+    their head to know what the register actually takes. Assign it
+    once, from its full condition, or in the arms of an if/else. In a
+    comb process this is the ordinary way to write a mux and is left
+    alone."""
+    for index, statement in enumerate(body):
+        if isinstance(statement, ast.Assign) and statement.targets:
+            name = driven(statement.targets[0])
+            if name is not None and name in assigned_under(body[index + 1:]):
+                found.append((
+                    statement.lineno,
+                    f'{process} paints {name} with a default and something '
+                    'below overrides it; assign it once'))
+    for statement in body:
+        for field in ('body', 'orelse', 'finalbody'):
+            inner = getattr(statement, field, None)
+            if isinstance(inner, list):
+                painted(inner, process, found)
+        if isinstance(statement, ast.Match):
+            for case in statement.cases:
+                painted(case.body, process, found)
+
+
+def defaults_in_clocked (text):
+    """The one rule here that needs the syntax tree rather than the
+    characters. A file that will not parse is left to Python to
+    complain about."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and clocked(node):
+            painted(node.body, node.name, found)
+    return sorted(found)
 
 
 def check (path):
@@ -60,6 +130,7 @@ def check (path):
         problems.append((len(lines), 'no newline at end of file'))
     elif text.endswith('\n\n'):
         problems.append((len(lines), 'blank line at end of file'))
+    problems += defaults_in_clocked(text)
     return problems
 
 

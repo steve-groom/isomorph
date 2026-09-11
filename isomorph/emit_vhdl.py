@@ -28,6 +28,34 @@ def min_width (value):
     return (-value - 1).bit_length() + 1
 
 
+VHDL_INT_MAX = 2 ** 31 - 1
+
+
+def fits_integer (value):
+    """VHDL's integer is 32 bits and signed, so a word with bit 31 set
+    cannot be written as a number at all: 0xC0000000 as the base of a
+    bridge window, or 0xDEADBEEF as a constant to read back, are both
+    past the end of it. Such a value goes in as bits instead."""
+    return -VHDL_INT_MAX - 1 <= int(value) <= VHDL_INT_MAX
+
+
+def word_width (value):
+    """The width to give a value too wide for an integer. A word is 32
+    bits unless the value needs more."""
+    value = int(value)
+    return max(32, min_width(value if value >= 0 else -value))
+
+
+def wide_literal (value, width):
+    """A value too wide for an integer as a literal of exactly `width`
+    bits, hex where the width divides by four because that is how an
+    address is read."""
+    value = int(value) & ((1 << width) - 1)
+    if width % 4 == 0:
+        return f'x"{value:0{width // 4}X}"'
+    return '"' + format(value, f'0{width}b') + '"'
+
+
 BAR_VHDL = '--' + '-' * 77
 
 HOUSE_LIMIT = 79
@@ -54,6 +82,34 @@ def fit_comment (line, indent, marker):
 
 
 
+def wide_params (modules):
+    """The generics that have to be a std_logic_vector because some
+    value in the design does not fit a VHDL integer: {module: {name:
+    width}}.
+
+    The entity and every generic map that drives it have to agree on
+    the type, and a merged build may override a generic with a value
+    of a different size from the one the entity declares, so the whole
+    design is looked at once rather than each module on its own."""
+    wide = {}
+
+    def note (module, name, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return
+        if fits_integer(value):
+            return
+        slot = wide.setdefault(module, {})
+        slot[name] = max(slot.get(name, 0), word_width(value))
+
+    for m in modules:
+        for name, value in m.parameters.items():
+            note(m.name, name, value)
+        for inst in m.instances:
+            for name, value in inst.params.items():
+                note(inst.module, name, value)
+    return wide
+
+
 def emit_vhdl (modules):
     """VHDL-2008 text for the module list, leaves first.
 
@@ -70,13 +126,14 @@ def emit_vhdl (modules):
     for m in modules:
         check_names(m)
     by_name = {m.name: m for m in modules}
+    wide = wide_params(modules)
     parts = []
     pkg = emit_package(modules)
     if pkg:
         parts.append(pkg)
     for m in modules:
         parts.append(BAR_VHDL + '\n' + emit_unit(m, by_name,
-                                                 modules[-1].name))
+                                                 modules[-1].name, wide))
     text = '\n\n'.join(parts)
     return text + ('\n' if not text.endswith('\n') else '')
 
@@ -89,13 +146,15 @@ def vhdl_files (modules):
     for m in modules:
         check_names(m)
     by_name = {m.name: m for m in modules}
+    wide = wide_params(modules)
     top = modules[-1].name
     out = []
     pkg = emit_package(modules)
     if pkg:
         out.append((f'{top}_pkg.vhd', pkg + '\n'))
     for m in modules:
-        out.append((m.name + '.vhd', emit_unit(m, by_name, top) + '\n'))
+        out.append((m.name + '.vhd',
+                    emit_unit(m, by_name, top, wide) + '\n'))
     return out
 
 
@@ -448,7 +507,7 @@ def wrap_long_lines (lines, marker, step):
             out += fold_line(tail, lead + step + step)
     return out
 
-def emit_unit (m, by_name, top_name):
+def emit_unit (m, by_name, top_name, wide = None):
     lines = []
     lines += header_lines(m)
     lines.append('library ieee;')
@@ -461,9 +520,10 @@ def emit_unit (m, by_name, top_name):
     if needs_pkg:
         lines.append(f'use work.{top_name}_pkg.all;')
     lines.append('')
-    lines += entity_lines(m)
+    wide = wide or {}
+    lines += entity_lines(m, wide.get(m.name, {}))
     lines.append('')
-    lines += architecture_lines(m, by_name)
+    lines += architecture_lines(m, by_name, wide)
     return '\n'.join(wrap_long_lines(lines, '--', 2))
 
 
@@ -525,7 +585,8 @@ def with_trailing (line, trailing):
     return line
 
 
-def entity_lines (m):
+def entity_lines (m, wide = None):
+    wide = wide or {}
     lines = [f'entity {m.name} is']
     gens = []
     for name, value in m.parameters.items():
@@ -537,7 +598,13 @@ def entity_lines (m):
         lines.append('  generic (')
         for i, (name, value) in enumerate(gens):
             semi = ';' if i < len(gens) - 1 else ''
-            lines.append(f'    {name} : integer := {value}{semi}')
+            if name in wide:
+                w = wide[name]
+                lines.append(
+                    f'    {name} : std_logic_vector({w - 1} downto 0) '
+                    f':= {wide_literal(value, w)}{semi}')
+            else:
+                lines.append(f'    {name} : integer := {value}{semi}')
         lines.append('  );')
     if m.ports:
         lines.append('  port (')
@@ -599,8 +666,8 @@ def port_lines (m):
     return out
 
 
-def architecture_lines (m, by_name):
-    ctx = Context(m, by_name)
+def architecture_lines (m, by_name, wide = None):
+    ctx = Context(m, by_name, wide)
     lines = [f'architecture rtl of {m.name} is']
     lines += constant_lines(m)
     lines += enum_decl_lines(m)
@@ -631,12 +698,11 @@ def constant_lines (m):
         if isinstance(value, bool):
             value = int(value)
         value = int(value)
-        if abs(value) > 2 ** 31 - 1:
-            w = max(32, min_width(value if value >= 0 else -value))
-            bits = format(value & ((1 << w) - 1), f'0{w}b')
+        if not fits_integer(value):
+            w = word_width(value)
             lines.append(
                 f'  constant {name} : std_logic_vector({w - 1} downto 0) '
-                f':= "{bits}";')
+                f':= {wide_literal(value, w)};')
         else:
             lines.append(f'  constant {name} : integer := {value};')
     if lines:
@@ -722,23 +788,30 @@ def function_decl_lines (ctx):
 
 
 class Context:
-    def __init__ (self, module, by_name):
+    def __init__ (self, module, by_name, wide = None):
         self.m = module
         self.by_name = by_name
+        self.wide_all = wide or {}
+        self.wide = self.wide_all.get(module.name, {})
         self.var_map = {}
         self.in_function = False
         self.int_names = set()
-        self.slv_consts = set()
+        # a constant or a generic that will not fit an integer is a
+        # vector, and is read as itself rather than converted
+        self.slv_names = set()
         for name, value in module.constants.items():
             if isinstance(value, bool):
                 self.int_names.add(name)
-            elif abs(int(value)) > 2 ** 31 - 1:
-                self.slv_consts.add(name)
+            elif not fits_integer(value):
+                self.slv_names.add(name)
             else:
                 self.int_names.add(name)
         for name, value in module.parameters.items():
             if isinstance(value, int) and not isinstance(value, bool):
-                self.int_names.add(name)
+                if name in self.wide:
+                    self.slv_names.add(name)
+                else:
+                    self.int_names.add(name)
         self.enum_types = set(module.enums)
         self.sig_width = {}
         self.sig_kind = {}
@@ -780,11 +853,13 @@ def instance_lines (ctx, inst):
         values.update(inst.params)
         gens = [(n, v) for n, v in values.items()
                 if isinstance(v, int) and not isinstance(v, bool)]
+        wide = ctx.wide_all.get(inst.module, {})
         if gens:
             lines.append('    generic map (')
             for i, (n, v) in enumerate(gens):
                 comma = ',' if i < len(gens) - 1 else ''
-                lines.append(f'      {n} => {v}{comma}')
+                text = wide_literal(v, wide[n]) if n in wide else str(v)
+                lines.append(f'      {n} => {text}{comma}')
             lines.append('    )')
     lines.append('    port map (')
     formals = list(inst.ports.items())
@@ -1170,6 +1245,8 @@ def as_vector (ctx, e):
 
 def as_unsigned (ctx, e):
     if e.op == 'const':
+        if not fits_integer(e.value):
+            return f"unsigned'({wide_literal(e.value, e.width)})"
         return f'to_unsigned({int(e.value)}, {e.width})'
     if e.op == 'ref' and e.value in ctx.int_names:
         return f'to_unsigned({e.value}, {e.width})'
@@ -1183,7 +1260,7 @@ def as_unsigned (ctx, e):
 
 def is_int_tree (ctx, e):
     if e.op == 'const':
-        return True
+        return fits_integer(e.value)
     if e.op == 'ref' and e.value in ctx.int_names:
         return True
     if e.op == 'binop' and e.value in ('+', '-', '*'):

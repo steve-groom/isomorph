@@ -45,6 +45,25 @@ def fit_comment (line, indent, marker):
 
 
 
+SV_INT_MAX = 2 ** 31 - 1
+
+
+def sv_number (value):
+    """A parameter or localparam value.
+
+    Unsized, so WIDTH-1 in an index stays integer arithmetic. A value
+    past the end of a signed 32-bit integer cannot be written that
+    way: Verilog reads a bare 3735928559 as a negative number, and a
+    comparison against it would then go signed. That one is sized and
+    written in hex, which is how a word of that size is read anyway."""
+    value = int(value)
+    if -SV_INT_MAX - 1 <= value <= SV_INT_MAX:
+        return str(value)
+    width = max(32, min_width(value if value >= 0 else -value))
+    width = ((width + 3) // 4) * 4
+    return f"{width}'h{value & ((1 << width) - 1):0{width // 4}X}"
+
+
 def body_key (m):
     """What the module is, with its name and parameter values taken out.
 
@@ -605,7 +624,7 @@ def parameter_lines (m, body = None):
     lines = []
     for index, (name, value) in enumerate(kept):
         comma = ',' if index < len(kept) - 1 else ''
-        lines.append(f'    parameter {name} = {value}{comma}')
+        lines.append(f'    parameter {name} = {sv_number(value)}{comma}')
     return lines
 
 
@@ -614,8 +633,7 @@ def localparam_lines (m, body = None):
     for name, value in m.constants.items():
         if body is not None and not used_in(name, body):
             continue
-        # Unsized so WIDTH-1 in an index is integer arithmetic.
-        lines.append(f'    localparam {name} = {int(value)};')
+        lines.append(f'    localparam {name} = {sv_number(value)};')
     if lines:
         lines.append('')
     return lines
@@ -754,7 +772,7 @@ def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
     formals = list(inst.ports.items())
     if inst.params:
-        values = ', '.join(f'.{n}({int(v)})'
+        values = ', '.join(f'.{n}({sv_number(v)})'
                            for n, v in sorted(inst.params.items()))
         lines.append(f'    {inst.module} #({values}) {inst.name} (')
     else:
