@@ -33,7 +33,6 @@ class Assign:
 class If:
     branches: list             # [(cond Expr or None for else, [stmts])]
     line: int = 0
-    unique: bool = False       # mutually exclusive conds: unique if (5.3)
     comments: list = field(default_factory = list)
     trailing: str = None
     # full-line comments written above each elif / else keyword, one

@@ -67,9 +67,8 @@ def stmts (body, indent):
                 if cond is None:
                     out.append(f'{pad}else:' if not first else f'{pad}always:')
                 else:
-                    tag = 'unique ' if first and s.unique else ''
                     kw = 'if' if first else 'elif'
-                    out.append(f'{pad}{tag}{kw} {ir.render(cond)}:')
+                    out.append(f'{pad}{kw} {ir.render(cond)}:')
                 first = False
                 out += stmts(b, indent + 4)
         elif isinstance(s, ir.For):

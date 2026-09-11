@@ -863,12 +863,14 @@ def if_lines (node, indent, nonblocking):
     if len(node.branches) == 1 and node.branches[0][0] is None:
         return stmt_lines(node.branches[0][1], indent, nonblocking)
     pad = ' ' * indent
-    # unique when the analyser can prove the branches are mutually
-    # exclusive, and a plain if otherwise. priority is an assertion
-    # about the design and a direction to the synthesizer to build the
-    # chain in order, and the author did not write either of those. An
-    # if that isomorph cannot prove anything about is emitted as an if.
-    first_kw = 'unique if' if node.unique else 'if'
+    # a plain if, always. priority is an assertion about the design and
+    # a direction to the synthesizer to build the chain in order, and
+    # the author wrote neither. unique used to be emitted where the
+    # branches were provably exclusive, and Quartus Prime Standard,
+    # which fits every number in RESULTS.md, rejects `unique if` as a
+    # syntax error (it takes unique before case only; 25.1std, checked
+    # 2026-09-12). One emitter, one output, so neither is written.
+    first_kw = 'if'
     lines = []
     headers = getattr(node, 'branch_comments', [])
     for i, (cond, body) in enumerate(node.branches):

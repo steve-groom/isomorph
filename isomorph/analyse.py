@@ -488,7 +488,6 @@ class Analyser:
                 break
             node_if = ir.If(branches, self.line_base + node.lineno)
             node_if.branch_comments = headers
-            node_if.unique = self.if_is_unique(branches)
             return node_if
         if isinstance(node, ast.For):
             return self.for_loop(node, scope)
@@ -585,26 +584,6 @@ class Analyser:
         val = self.expression(value, scope)
         val = self.fit(val, tgt.width, node)
         return ir.Assign(tgt, val, self.line_base + node.lineno)
-
-    def if_is_unique (self, branches):
-        """Same subject compared to different constants or enum members
-        is mutually exclusive (SPEC 5.3)."""
-        conds = [c for c, _ in branches if c is not None]
-        if len(conds) < 2:
-            return False
-        parts = []
-        for cond in conds:
-            pair = _exclusive_cmp(cond)
-            if pair is None:
-                return False
-            parts.append(pair)
-        subject = ir.render(parts[0][0])
-        discs = []
-        for left, right in parts:
-            if ir.render(left) != subject:
-                return False
-            discs.append(ir.render(right))
-        return len(discs) == len(set(discs))
 
     def field_expr (self, sig, fname, stmt):
         if sig.type is None or fname not in sig.type.fields:
@@ -1489,18 +1468,6 @@ def struct_field_lo (struct_type, field_name):
             return lo
         msb = lo
     return 0
-
-
-def _exclusive_cmp (cond):
-    """(subject, discriminator) for `x == const` / `x == enum`, else None."""
-    if cond.op != 'cmp' or cond.value != '==':
-        return None
-    left, right = cond.args
-    if right.op in ('const', 'enum'):
-        return left, right
-    if left.op in ('const', 'enum'):
-        return right, left
-    return None
 
 
 def match_covers_all (s):
