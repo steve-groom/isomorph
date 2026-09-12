@@ -954,9 +954,19 @@ def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
     formals = list(inst.ports.items())
     if inst.params:
-        values = ', '.join(f'.{n}({sv_param(v)})'
-                           for n, v in sorted(inst.params.items()))
-        lines.append(f'    {inst.module} #({values}) {inst.name} (')
+        kept = sorted(inst.params.items())
+        values = ', '.join(f'.{n}({sv_param(v)})' for n, v in kept)
+        head = f'    {inst.module} #({values}) {inst.name} ('
+        if len(head) <= HOUSE_LIMIT:
+            lines.append(head)
+        else:
+            # vendor IP arrives with a dozen parameters and the one
+            # line form is unreadable long before it is illegal
+            lines.append(f'    {inst.module} #(')
+            for index, (n, v) in enumerate(kept):
+                comma = ',' if index < len(kept) - 1 else ''
+                lines.append(f'        .{n}({sv_param(v)}){comma}')
+            lines.append(f'    ) {inst.name} (')
     else:
         lines.append(f'    {inst.module} {inst.name} (')
     for i, (formal, actual) in enumerate(formals):

@@ -46,7 +46,8 @@ class Scope:
 
 
 class Analyser:
-    def __init__ (self, elaborated, child_directions = None):
+    def __init__ (self, elaborated, child_directions = None,
+                  child_domains = None):
         self.e = elaborated
         self.file = inspect.getsourcefile(elaborated.func)
         self.driven = {}                    # signal name -> driver name
@@ -54,6 +55,14 @@ class Analyser:
         self.functions = {}                 # name -> ir.Function
         self.warnings = []
         self.child_directions = child_directions or {}
+        self.child_domains = child_domains or {}
+        self.child_clocks = (child_domains or {}).get('__clocks__', {})
+        self.child_sync = (child_domains or {}).get('__sync__', {})
+        self.domains = {}
+        self.port_domains = {}
+        self.port_clocks = set()
+        self.sync_inputs = set()
+        self.crossings = []
         self.comments = source_comments(elaborated.func)
         self.file_lines = file_lines(self.file)
         self.consumed = set()           # comment lines already placed
@@ -201,7 +210,238 @@ class Analyser:
         self.check_instance_arrays(mod)
         self.check_unused(mod)
         self.check_comb_loops(mod)
+        self.domains = self.signal_domains(mod)
+        self.sync_inputs = self.sampled_inputs(mod)
+        self.crossings = self.check_crossings(mod, self.domains)
+        self.port_domains = {
+            p.name: self.domains.get(p.name, set())
+            for p in mod.ports if p.direction == 'out'}
+        self.port_clocks = self.clock_ports(mod)
         return mod
+
+    def clock_ports (self, mod):
+        """The ports of this module that carry a clock.
+
+        Its own flops name some; an instance below may name others
+        through a port that does nothing here but pass a clock down,
+        which is what a per-domain reset synchroniser looks like.
+        """
+        names = {p.clock for p in mod.processes
+                 if p.kind == 'ff' and p.clock}
+        for inst in mod.instances:
+            for formal in self.child_clocks.get(inst.module, set()):
+                actual = inst.ports.get(formal)
+                if actual is not None and actual.op == 'ref':
+                    names.add(str(actual.value).split('[')[0])
+        ports = {p.name for p in mod.ports}
+        return {name for name in names if name in ports}
+
+    def signal_domains (self, mod):
+        """Which clock drives each signal, as a set of clock names.
+
+        A flop stamps its own clock on everything it writes. A comb
+        process and a continuous assignment carry whatever their
+        inputs carry, worked out by going round until nothing changes,
+        because one comb process may feed another. An input port
+        carries nothing: what drives it happened in the parent, so
+        nothing here can say, and guessing would invent crossings.
+        """
+        dom = {}
+
+        def add (name, clocks):
+            if not name or not clocks:
+                return False
+            before = dom.get(name, set())
+            if clocks <= before:
+                return False
+            dom[name] = before | clocks
+            return True
+
+        for p in mod.processes:
+            if p.kind == 'ff' and p.clock:
+                for name in body_writes(p.body):
+                    add(name, {p.clock})
+        # an instance hands back its child's domains, renamed to what
+        # this module calls those clocks
+        for inst in mod.instances:
+            child = self.child_domains.get(inst.module, {})
+            for formal, clocks in child.items():
+                actual = inst.ports.get(formal)
+                if actual is None or actual.op != 'ref':
+                    continue
+                outer = set()
+                for clock in clocks:
+                    carried = inst.ports.get(clock)
+                    if carried is not None and carried.op == 'ref':
+                        outer.add(str(carried.value).split('[')[0])
+                add(str(actual.value).split('[')[0], outer)
+        changed = True
+        rounds = 0
+        while changed and rounds < 64:
+            changed = False
+            rounds += 1
+            for p in mod.processes:
+                if p.kind != 'comb':
+                    continue
+                carried = set()
+                for name in body_reads(p.body):
+                    carried |= dom.get(name, set())
+                for name in body_writes(p.body):
+                    changed = add(name, carried) or changed
+            for a in mod.assigns:
+                carried = set()
+                for name in expr_refs(a.value):
+                    carried |= dom.get(name, set())
+                changed = add(root_name(a.target), carried) or changed
+        return dom
+
+    def check_crossings (self, mod, dom):
+        """A flop that samples a signal another clock drives.
+
+        Two flops per bit resolve metastability one bit at a time;
+        they do not make a bus atomic, so a multi-bit value sampled
+        straight across can be read as one the source never held, and
+        that is an error. One bit is a severe warning: still wrong,
+        but a static signal crossing is the one case where a designer
+        may know something the converter cannot.
+
+        A crossing is deliberate when the flop it lands in carries the
+        synchroniser attribute the house style puts on such a chain,
+        which is what a synchroniser chain does. Those are collected rather
+        than complained about, because they are the paths a timing
+        constraint has to name.
+        """
+        # the attribute goes on the flop that resolves the
+        # metastability, which is the destination, and that may be a
+        # port as easily as a signal
+        marked = {s.name for s in mod.signals
+                  if SYNC_ATTRIBUTE in (s.attributes or {})}
+        marked |= {p.name for p in mod.ports
+                   if SYNC_ATTRIBUTE in (p.attributes or {})}
+        width = {s.name: s.width for s in mod.signals}
+        width.update({p.name: p.width for p in mod.ports})
+        found = []
+        for p in mod.processes:
+            if p.kind != 'ff' or not p.clock:
+                continue
+            targets = body_writes(p.body)
+            synchroniser = bool(targets) and targets <= marked
+            for name in sorted(body_reads(p.body)):
+                other = dom.get(name, set()) - {p.clock}
+                if not other:
+                    continue
+                for source in sorted(other):
+                    found.append({'signal': name, 'from': source,
+                                  'to': p.clock, 'process': p.name,
+                                  'width': width.get(name, 1),
+                                  'synchronised': synchroniser})
+                if synchroniser:
+                    continue
+                self.report_crossing(mod, p, name, other, width)
+        # a crossing also happens where a value is handed to a child
+        # running on another clock, which is what every synchroniser
+        # instance in a dual-clock design is
+        found += self.instance_crossings(mod, dom, width)
+        return found
+
+    def sampled_inputs (self, mod):
+        """Input ports whose value lands in a flop marked as a
+        synchroniser, so a parent may hand them another clock's
+        signal on purpose."""
+        marked = {s.name for s in mod.signals
+                  if SYNC_ATTRIBUTE in (s.attributes or {})}
+        marked |= {p.name for p in mod.ports
+                   if SYNC_ATTRIBUTE in (p.attributes or {})}
+        inputs = {p.name for p in mod.ports if p.direction == 'in'}
+        out = set()
+        for p in mod.processes:
+            if p.kind != 'ff' or not p.clock:
+                continue
+            targets = body_writes(p.body)
+            if not targets or not targets <= marked:
+                continue
+            out |= body_reads(p.body) & inputs
+        for inst in mod.instances:
+            for formal in self.child_sync.get(inst.module, set()):
+                actual = inst.ports.get(formal)
+                if actual is not None and actual.op == 'ref':
+                    name = str(actual.value).split('[')[0]
+                    if name in inputs:
+                        out.add(name)
+        return out
+
+    def instance_crossings (self, mod, dom, width):
+        """A child on one clock handed a value another clock drives."""
+        found = []
+        for inst in mod.instances:
+            formals = self.child_clocks.get(inst.module, set())
+            here = set()
+            for formal in formals:
+                actual = inst.ports.get(formal)
+                if actual is not None and actual.op == 'ref':
+                    here.add(str(actual.value).split('[')[0])
+            if not here:
+                continue
+            directions = self.child_directions.get(inst.module, {})
+            accepted = self.child_sync.get(inst.module, set())
+            for formal, actual in inst.ports.items():
+                if formal in formals or actual is None:
+                    continue
+                if actual.op != 'ref' or directions.get(formal) != 'in':
+                    continue
+                name = str(actual.value).split('[')[0]
+                other = dom.get(name, set()) - here
+                if not other:
+                    continue
+                synchronised = formal in accepted
+                for source in sorted(other):
+                    found.append({'signal': name, 'from': source,
+                                  'to': sorted(here)[0],
+                                  'process': inst.name,
+                                  'width': width.get(name, 1),
+                                  'synchronised': synchronised})
+                if synchronised:
+                    continue
+                self.report_instance_crossing(mod, inst, formal, name,
+                                              other, width)
+        return found
+
+    def report_crossing (self, mod, p, name, other, width):
+        listed = ', '.join(sorted(other))
+        bits = width.get(name, 1)
+        if bits > 1:
+            raise ConversionError(
+                f'{p.name} runs on {p.clock} and samples {name}, '
+                f'{bits} bits wide, which {listed} drives. Two flops '
+                'resolve one bit at a time and do not make a bus '
+                'atomic, so the destination can read a value the source '
+                'never held. Cross it through a synchroniser one bit at '
+                'a time, Gray code it, or hold it still with a '
+                'handshake and cross only the flag.',
+                self.file, p.line)
+        self.warnings.append(
+            f'severe: crossing: {p.name} runs on {p.clock} and samples '
+            f'{name}, which {listed} drives, with no synchroniser. A '
+            f'flop that samples another clock carries {SYNC_ATTRIBUTE}; '
+            'see the house style.')
+
+    def report_instance_crossing (self, mod, inst, formal, name, other,
+                                  width):
+        listed = ', '.join(sorted(other))
+        bits = width.get(name, 1)
+        if bits > 1:
+            raise ConversionError(
+                f'{inst.name}.{formal} is given {name}, {bits} bits '
+                f'wide, which {listed} drives, and {inst.name} runs on '
+                'another clock. Two flops resolve one bit at a time and '
+                'do not make a bus atomic. Gray code it, or hold it '
+                'still with a handshake and cross only the flag.',
+                self.file, inst.line)
+        self.warnings.append(
+            f'severe: crossing: {inst.name}.{formal} is given {name}, '
+            f'which {listed} drives, and {inst.name} runs on another '
+            f'clock with no flop marked {SYNC_ATTRIBUTE} behind that '
+            'port.')
 
     def check_instance_arrays (self, mod):
         """A loop over instances is a generate, or it is an error.
@@ -1544,6 +1784,66 @@ def root (expr):
     return expr.value
 
 
+# The attribute that says a flop is there to resolve metastability.
+# The house style's synchroniser block writes five of them, one per
+# vendor; this is the one that means synchroniser rather than merely
+# keep, and it is what marks a crossing as deliberate.
+SYNC_ATTRIBUTE = 'async_reg'
+
+
+def body_reads (body):
+    """Every signal read anywhere in these statements."""
+    names = set()
+    for s in body or []:
+        if isinstance(s, ir.Assign):
+            names |= expr_refs(s.value)
+            # an indexed target reads its index
+            target = s.target
+            while target.op in ('slice', 'bit', 'part', 'part_down',
+                                'field'):
+                for arg in target.args[1:]:
+                    names |= expr_refs(arg)
+                target = target.args[0]
+        elif isinstance(s, ir.If):
+            for cond, inner in s.branches:
+                names |= expr_refs(cond)
+                names |= body_reads(inner)
+        elif isinstance(s, ir.Match):
+            names |= expr_refs(s.subject)
+            for _, inner in s.arms:
+                names |= body_reads(inner)
+        elif isinstance(s, ir.For):
+            names |= body_reads(s.body)
+        elif isinstance(s, ir.Assert):
+            names |= expr_refs(s.cond)
+        elif isinstance(s, ir.Return):
+            names |= expr_refs(s.value)
+    return names
+
+
+def body_writes (body):
+    """Every signal assigned anywhere in these statements."""
+    names = set()
+    for s in body or []:
+        if isinstance(s, ir.Assign):
+            names.add(root_name(s.target))
+        elif isinstance(s, ir.If):
+            for _, inner in s.branches:
+                names |= body_writes(inner)
+        elif isinstance(s, ir.Match):
+            for _, inner in s.arms:
+                names |= body_writes(inner)
+        elif isinstance(s, ir.For):
+            names |= body_writes(s.body)
+    return names
+
+
+def root_name (expr):
+    while expr.op in ('slice', 'bit', 'part', 'part_down', 'field'):
+        expr = expr.args[0]
+    return str(expr.value).split('[')[0] if expr.op == 'ref' else ''
+
+
 def expr_refs (e):
     names = set()
     if e is None:
@@ -1744,17 +2044,29 @@ def analyse (elaborated, allow_severe = False):
     what --allow-severe passes for someone mid-refactor."""
     modules, warnings = [], []
     directions = {}
+    domains = {}
+    crossings = []
     for node in elaborated.walk():
         if isinstance(node, Blackbox):
             m = blackbox_module(node)
             directions[m.name] = {p.name: p.direction for p in m.ports}
+            domains[m.name] = {}
             modules.append(m)
             continue
-        a = Analyser(node, directions)
+        a = Analyser(node, directions, domains)
         m = a.module()
         directions[m.name] = {p.name: p.direction for p in m.ports}
+        domains[m.name] = a.port_domains
+        domains.setdefault('__clocks__', {})[m.name] = a.port_clocks
+        domains.setdefault('__sync__', {})[m.name] = a.sync_inputs
+        for crossing in a.crossings:
+            crossing = dict(crossing)
+            crossing['module'] = m.name
+            crossings.append(crossing)
         modules.append(m)
         warnings += [f'{node.module_name}: {w}' for w in a.warnings]
+    if modules:
+        modules[-1].crossings = crossings
     fatal = fatal_warnings(warnings)
     if fatal and not allow_severe:
         listed = '\n  '.join(' '.join(w.split()) for w in fatal)

@@ -186,6 +186,9 @@ class Module:
     # something the fitter has and isomorph does not: ports, no body
     blackbox: bool = False
     blackbox_source: str = None
+    # every clock-domain crossing in the design, on the top module
+    # only: what a timing constraint has to name (ROADMAP item 7)
+    crossings: list = field(default_factory = list)
 
 
 def render (e):
