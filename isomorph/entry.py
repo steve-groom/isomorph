@@ -18,6 +18,7 @@ import time
 from . import convert
 from .elaborate import Elaborated
 from .execute import SimError
+from .sdc import VENDORS
 from .signal import IsomorphError
 from .sim import Simulator
 
@@ -48,6 +49,11 @@ write
   --c99 [FILE]     C99 sources (.c, .h, _vcd.c)
   --json [FILE]    the design as JSON, for a tool that wants to read it
                    rather than build it. Nothing in isomorph reads it
+  --sdc VENDOR     timing constraints for quartus, vivado or efinity.
+                   The dialects differ, so the vendor is named. It is
+                   a supplement to whatever already defines the clocks
+                   in your flow, and it carries the clock-domain
+                   crossings, which need the design analysed to find
   --lint           check what was written with verilator and ghdl
   --dump           print the IR instead of writing
   --allow-severe   carry on with an inferred latch or a combinational
@@ -74,6 +80,7 @@ class Options:
         self.vhdl = None
         self.c99 = None
         self.json = None
+        self.sdc = None
         self.lint = False
         self.dump = False
         self.allow_severe = False
@@ -84,7 +91,7 @@ class Options:
     def writing (self):
         return (self.sv is not None or self.vhdl is not None
                 or self.c99 is not None or self.json is not None
-                or self.dump)
+                or self.sdc is not None or self.dump)
 
 
 def parse (args, prog = 'design.py'):
@@ -124,6 +131,17 @@ def parse (args, prog = 'design.py'):
             opts.c99 = value('--c99')
         elif arg == '--json':
             opts.json = value('--json')
+        elif arg == '--sdc':
+            if not rest or rest[0].startswith('-'):
+                raise IsomorphError(
+                    '--sdc names a vendor: '
+                    + ', '.join(VENDORS) + '\n\n' + _usage(prog))
+            picked = rest.pop(0)
+            if picked not in VENDORS:
+                raise IsomorphError(
+                    f'--sdc: {picked!r} is not one of '
+                    + ', '.join(VENDORS) + '\n\n' + _usage(prog))
+            opts.sdc = picked
         elif arg == '--allow-severe':
             opts.allow_severe = True
         elif arg == '--lint':
@@ -229,6 +247,7 @@ def main (elaborate, test = None, argv = None, prog = None):
                     vhdl = opts.vhdl if opts.vhdl is not None else False,
                     c99 = opts.c99 if opts.c99 is not None else False,
                     json = opts.json,
+                    sdc = opts.sdc,
                     allow_severe = opts.allow_severe,
                     lint = opts.lint,
                     outdir = opts.outdir)

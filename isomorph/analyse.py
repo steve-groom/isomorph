@@ -517,7 +517,8 @@ class Analyser:
             direction = 'out' if pname in self.driven else 'in'
             out.append(ir.Port(pname, value.width, direction, value.kind,
                                value.type, 0, [], None,
-                               dict(value.attributes)))
+                               dict(value.attributes),
+                               getattr(value, 'clock_period_ns', None)))
         elif isinstance(value, SignalArray):
             pname = self.name_of(value)
             # an instance drives a whole array under its own name and

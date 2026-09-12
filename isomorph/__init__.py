@@ -4,7 +4,8 @@ import sys
 
 from .signal import (signal, signals, vector, enum, struct,
     preload, attr, open_port, concat, replicate, bits, always_comb,
-    always_ff, always_ff_async_reset, assign, instances, IsomorphError)
+    always_ff, always_ff_async_reset, assign, clock, instances,
+    IsomorphError)
 from .elaborate import block, Elaborated
 from .blackbox import blackbox, Blackbox
 from .analyse import analyse, fatal_warnings, ConversionError
@@ -14,14 +15,17 @@ from .emit_vhdl import (emit_vhdl, write_vhdl, write_vhdl_files,
                         lint_vhdl)
 from .emit_c99 import emit_c99, write_c99
 from .sidecar import sidecar, write_sidecar
+from .sdc import emit_sdc, write_sdc, VENDORS
 from .execute import SimError
 from .sim import Simulator
 
 __all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
-           'struct', 'preload', 'attr', 'open_port', 'concat',
+           'struct', 'preload', 'attr', 'open_port', 'clock',
+           'concat',
            'replicate', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
+           'emit_sdc', 'write_sdc',
            'IsomorphError', 'ConversionError', 'SimError', 'Simulator',
            'main']
 
@@ -39,7 +43,7 @@ def report_lint (text):
 
 def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
              allow_severe = False, lint = False, outdir = 'build',
-             json = None):
+             json = None, sdc = None):
     """Analyse a block. Dump the IR with dump_ir / --dump.
 
     Default: write build/<top>/ - one file per module and a
@@ -47,6 +51,9 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     sv / --sv: SystemVerilog (path or default).
     vhdl / --vhdl: VHDL-2008 (path or default).
     json / --json: the intermediate form as JSON, for another tool.
+    sdc / --sdc VENDOR: timing constraints for quartus, vivado or
+    efinity. A supplement to whatever already defines the clocks, not
+    a replacement for it.
     c99 / --c99: cycle-accurate C99 smoke (.c and .h).
     lint runs verilator and ghdl over what was written.
     outdir is where a path that was not given by name goes.
@@ -158,6 +165,15 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     # wants to read a design rather than build it - a pin planner, a
     # register-map generator. Nothing in isomorph reads it, so it is
     # written when it is asked for and not beside every conversion
+    # the constraints name the clocks and the crossings, and both of
+    # those are names from the Python, so the file and the netlist
+    # agree without anyone matching them up by hand
+    if sdc:
+        base = os.path.join(outdir, top_name)
+        suffix = 'xdc' if sdc == 'vivado' else 'sdc'
+        sdc_path = os.path.join(base, f'{top_name}.{suffix}')
+        write_sdc(modules, sdc_path, sdc)
+        wrote.append(sdc_path)
     if json is not None:
         json_path = json
         if json_path is True:

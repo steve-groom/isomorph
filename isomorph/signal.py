@@ -175,6 +175,26 @@ class SignalArray(list):
             element.parent = self
 
 
+def clock (signal, period):
+    """Declare a clock's period, for the timing constraints.
+
+    period is in seconds, the same unit add_clock takes, so
+    clock(i_clock, period = 20e-9) is fifty megahertz. It is a fact
+    about the board rather than about the bench, so it is declared
+    here and reaches the emitted .sdc; nothing in the simulators reads
+    it, and nothing in the HDL changes because of it.
+    """
+    if not isinstance(signal, Signal):
+        raise IsomorphError('clock() takes a signal and a period')
+    seconds = float(period)
+    if seconds <= 0:
+        raise IsomorphError(
+            f'clock(): a period is a positive number of seconds, not '
+            f'{period!r}. Fifty megahertz is period = 20e-9.')
+    signal.clock_period_ns = seconds * 1e9
+    return signal
+
+
 def array_view (elements):
     """An array port over signals that already exist.
 

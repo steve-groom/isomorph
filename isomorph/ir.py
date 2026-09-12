@@ -112,6 +112,7 @@ class Port:
     comments: list = field(default_factory = list)
     trailing: str = None
     attributes: dict = field(default_factory = dict)
+    period_ns: float = None    # declared by clock(), for the .sdc
 
 
 @dataclass
