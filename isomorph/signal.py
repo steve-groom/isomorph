@@ -309,6 +309,24 @@ def replicate (value, count):
     raise IsomorphError('replicate() is read from the AST, not executed')
 
 
+def sign_extend (value, count):
+    """replicate() under the name of the one job it is really for.
+
+    Counted across both trees on 2026-09-13: thirty-five of the
+    thirty-seven replicate() calls repeat a constant, which const()
+    now says better, and two extend a sign. Those two are the reason
+    the operator exists at all, so they get to say so:
+
+        concat(sign_extend(instr[2], WIDTHD - 3), instr[2:0])
+
+    reads as what it does, where the same line written with
+    replicate() makes the reader work out that the bit being repeated
+    is the top one. It is the same operator and the same emitted
+    replication; only the name is different.
+    """
+    raise IsomorphError('sign_extend() is read from the AST, not executed')
+
+
 def bits (pattern):
     raise IsomorphError('bits() is read from the AST, not executed')
 

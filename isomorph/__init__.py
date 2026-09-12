@@ -4,8 +4,8 @@ import sys
 
 from .signal import (signal, signals, vector, enum, struct,
     preload, attr, open_port, concat, replicate, bits, always_comb,
-    always_ff, always_ff_async_reset, assign, clock, const, instances,
-    IsomorphError)
+    always_ff, always_ff_async_reset, assign, clock, const, sign_extend,
+    instances, IsomorphError)
 from .elaborate import block, Elaborated
 from .blackbox import blackbox, Blackbox
 from .analyse import analyse, fatal_warnings, ConversionError
@@ -22,7 +22,7 @@ from .sim import Simulator
 __all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
            'struct', 'preload', 'attr', 'open_port', 'clock', 'const',
            'concat',
-           'replicate', 'bits', 'always_comb', 'always_ff',
+           'replicate', 'sign_extend', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
            'emit_sdc', 'write_sdc',

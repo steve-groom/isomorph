@@ -11,6 +11,7 @@ from types import SimpleNamespace, FunctionType
 from . import ir
 from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
+    sign_extend,
     StructType, Process, Assign, Vector, IsomorphError, concat, replicate,
     bits, vector)
 from . import reserved
@@ -1475,9 +1476,13 @@ class Analyser:
                                      f'{p.value} in concat takes '
                                      f'{p.width} bits')
             return ir.Expr('concat', sum(p.width for p in parts), args = parts)
-        if target is replicate:
+        if target is replicate or target is sign_extend:
             inner = self.expression(node.args[0], scope)
             count = self.constant(node.args[1], scope, node)
+            if target is sign_extend and inner.width != 1:
+                self.error(node, 'sign_extend() repeats the sign bit, so '
+                           f'it takes one bit and was given {inner.width}. '
+                           'Name the bit: sign_extend(x[7], 24).')
             return ir.Expr('replicate', inner.width * count, args = [inner],
                            value = count)
         if target is len:
