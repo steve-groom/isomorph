@@ -1135,6 +1135,11 @@ def sv_const (value, width, signed = False, base = None):
     compiles says what the Python said."""
     value = int(value)
     if signed:
+        # the sign goes outside the literal. 8'sd-1 is not a number to
+        # Verilog, which reads the base and then finds no digits;
+        # verilator says "Number is missing value digits"
+        if value < 0:
+            return f"-{width}'sd{-value}"
         return f"{width}'sd{value}"
     if width == 1:
         return "1'b1" if value else "1'b0"
