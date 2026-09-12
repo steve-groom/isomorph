@@ -10,7 +10,7 @@ from types import SimpleNamespace, FunctionType
 
 from . import ir
 from .blackbox import Blackbox
-from .signal import (Signal, SignalArray, EnumType, EnumMember,
+from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
     StructType, Process, Assign, Vector, IsomorphError, concat, replicate,
     bits, vector)
 from . import reserved
@@ -1099,13 +1099,32 @@ class Analyser:
         e.line = self.line_base + getattr(node, 'lineno', 0)
         return e
 
+    def literal_base (self, node):
+        """How the number was written, so it can be written that way
+        again. Hex in the Python is hex in the HDL: the same argument
+        as names travelling and comments travelling."""
+        line = getattr(node, 'lineno', 0)
+        if not line or line - 1 >= len(self.source_lines):
+            return None
+        text = self.source_lines[line - 1][
+            getattr(node, 'col_offset', 0):
+            getattr(node, 'end_col_offset', 0)].strip().lower()
+        if text.startswith('0x'):
+            return 'hex'
+        if text.startswith('0b'):
+            return 'bin'
+        if text.startswith('0o'):
+            return 'oct'
+        return None
+
     def _expression (self, node, scope):
         if isinstance(node, ast.Constant):
             v = node.value
             if isinstance(v, bool):
                 return ir.Expr('const', 1, value = int(v))
             if isinstance(v, int):
-                return ir.Expr('const', min_width(v), v < 0, value = v)
+                return ir.Expr('const', min_width(v), v < 0, value = v,
+                               base = self.literal_base(node))
             self.error(node, f'unsupported constant {v!r}')
         if isinstance(node, (ast.Name, ast.Attribute)):
             obj = self.resolve(node, scope, node)
@@ -1456,6 +1475,19 @@ class Analyser:
         if target is bits:
             pattern = node.args[0].value
             return ir.Expr('bits', len(pattern), value = pattern)
+        if target is const:
+            if len(node.args) != 2:
+                self.error(node, 'const(value, width): a number and the '
+                           'width to carry it in')
+            value = self.constant(node.args[0], scope, node)
+            width = self.constant(node.args[1], scope, node)
+            if width < 1:
+                self.error(node, f'const(): width {width} is not positive')
+            if min_width(value) > width:
+                self.error(node, f'const(): {value} does not fit in '
+                           f'{width} bits')
+            return ir.Expr('const', width, value = value,
+                           base = self.literal_base(node.args[0]))
         if target is vector:
             self.error(node, 'vector(W) declares a function local: '
                        'name = vector(W)')

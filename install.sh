@@ -16,8 +16,8 @@ usage: install.sh [--pack] [--user] [--editable] [--deps] [--dest DIR]
               env is writable
   --editable  pip install -e (developers; points at the tree)
   --deps      install the external tools too (gcc, verilator,
-              ghdl). Needs root. Without it they are only
-              reported.
+              ghdl, yosys and its ghdl plugin). Needs root.
+              Without it they are only reported.
   --dest DIR  install prefix instead of ~/isomorph
 
 After install, the house import works:

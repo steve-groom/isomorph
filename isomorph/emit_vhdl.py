@@ -1110,12 +1110,7 @@ def stmt_lines (ctx, body, indent):
         elif isinstance(s, ir.Match):
             lines += match_lines(ctx, s, indent)
         elif isinstance(s, ir.Assert):
-            lines.append(f'{pad}-- synthesis translate_off')
-            cond = vhdl_condition(ctx, s.cond)
-            text = s.message or f'assertion at line {s.line}'
-            line = f'{pad}assert {cond} report "{text}" severity error;'
-            lines.append(with_trailing(line, trailing))
-            lines.append(f'{pad}-- synthesis translate_on')
+            lines += assert_lines(ctx, s, indent, trailing)
         elif isinstance(s, ir.Return):
             line = f'{pad}return {vhdl_expr(ctx, s.value)};'
             lines.append(with_trailing(line, trailing))
@@ -1214,6 +1209,53 @@ def match_lines (ctx, node, indent):
     return lines
 
 
+def assert_lines (ctx, s, indent, trailing):
+    """An assertion, checked only where the values are real.
+
+    VHDL has nine-valued logic and starts a register at 'U'; the
+    Python model, the C99 one and Verilator all start it at zero.
+    Isomorph emits no power-on value on purpose (SPEC 3.3), so before
+    a reset an invariant over a register nothing has written compares
+    false here and true on the other three, and the assertion fires
+    on all four backends but one. Measured: stream_from_memory's 'a
+    read landed with no room' at @0ms under ghdl and nowhere else.
+
+    An unknown is not a violation, it is an absence of information, so
+    the check is guarded by the values it reads being real. Where they
+    are, the assertion is exactly what the author wrote; where they
+    are not, there is nothing to say. 'U' and 'X' are both metavalues
+    and is_x covers every one of them.
+    """
+    pad = ' ' * indent
+    lines = [f'{pad}-- synthesis translate_off']
+    cond = vhdl_condition(ctx, s.cond)
+    text = s.message or f'assertion at line {s.line}'
+    watched = sorted(name for name in expr_names(s.cond)
+                     if name in ctx.sig_width)
+    body = pad
+    if watched:
+        guard = ' or '.join(f'is_x({vhdl_id(name)})' for name in watched)
+        lines.append(f'{pad}if (not ({guard})) then')
+        body = pad + '  '
+    line = f'{body}assert {cond} report "{text}" severity error;'
+    lines.append(with_trailing(line, trailing) if not watched else line)
+    if watched:
+        lines.append(f'{pad}end if;')
+    lines.append(f'{pad}-- synthesis translate_on')
+    return lines
+
+
+def expr_names (e):
+    names = set()
+    if e is None:
+        return names
+    if e.op == 'ref':
+        names.add(str(e.value).split('[')[0])
+    for arg in getattr(e, 'args', []) or []:
+        names |= expr_names(arg)
+    return names
+
+
 def vhdl_target (ctx, e):
     return vhdl_expr(ctx, e)
 
@@ -1243,12 +1285,16 @@ def vhdl_cmp_bool (ctx, e):
     return f'{left} {vhdl_op} {right}'
 
 
-def vhdl_bits (value, width, signed = False):
+def vhdl_bits (value, width, signed = False, base = None):
+    """A bit string, in hex where that is what was written and the
+    width divides by four, which is how an address is read."""
     value = int(value)
     if width == 1:
         return "'1'" if value else "'0'"
     if signed and value < 0:
         value = value & ((1 << width) - 1)
+    if base == 'hex' and width % 4 == 0:
+        return f'x"{value & ((1 << width) - 1):0{width // 4}X}"'
     bits = format(value, f'0{width}b')
     if len(bits) > width:
         bits = bits[-width:]

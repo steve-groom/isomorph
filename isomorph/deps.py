@@ -18,13 +18,16 @@ MIN_PYTHON = (3, 11)
 
 class Tool:
     def __init__ (self, name, command, args, enables, required = False,
-                  packages = None):
+                  packages = None, versioned = True):
         self.name = name
         self.command = command
         self.args = args
         self.enables = enables
         self.required = required
         self.packages = packages or {}
+        # a plugin has no version of its own: the command is the host
+        # tool and its banner is not the answer to the question asked
+        self.versioned = versioned
 
 
 TOOLS = [
@@ -48,9 +51,19 @@ TOOLS = [
          packages = {'debian': 'verilator', 'fedora': 'verilator',
                      'arch': 'verilator', 'darwin': 'verilator'}),
     Tool('ghdl', 'ghdl', ['--version'],
-         '--lint of VHDL',
+         '--lint of VHDL, and the VHDL equivalence check',
          packages = {'debian': 'ghdl', 'fedora': 'ghdl',
                      'arch': 'ghdl', 'darwin': 'ghdl'}),
+    Tool('yosys', 'yosys', ['--version'],
+         'proving the two emitted languages one netlist',
+         packages = {'debian': 'yosys', 'fedora': 'yosys',
+                     'arch': 'yosys', 'darwin': 'yosys'}),
+    Tool('yosys ghdl plugin', 'yosys', ['-m', 'ghdl', '-p', 'help ghdl'],
+         'reading the emitted VHDL into yosys, for that proof',
+         versioned = False,
+         packages = {'debian': 'yosys-plugin-ghdl',
+                     'fedora': 'yosys-ghdl', 'arch': 'ghdl-yosys-plugin',
+                     'darwin': 'oss-cad-suite'}),
 ]
 
 
@@ -95,9 +108,13 @@ def version_of (tool):
     try:
         result = subprocess.run([tool.command] + tool.args,
                                 capture_output = True, text = True,
-                                timeout = 20)
+                                timeout = 60)
     except (OSError, subprocess.SubprocessError):
         return path, ''
+    if not tool.versioned:
+        # the question is whether it loads, and the answer is the
+        # exit code rather than anything in the banner
+        return (path, 'installed') if result.returncode == 0 else (None, None)
     text = (result.stdout or result.stderr or '').strip().splitlines()
     if not text:
         return path, ''

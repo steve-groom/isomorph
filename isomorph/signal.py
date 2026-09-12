@@ -313,6 +313,24 @@ def bits (pattern):
     raise IsomorphError('bits() is read from the AST, not executed')
 
 
+def const (value, width):
+    """A number that carries its own width.
+
+    A bare number takes the width of wherever it is used, which is
+    right nearly everywhere and impossible in the one place it is not:
+    a shift has no context to take, so `1 << i_sel` has nothing to
+    happen in. const(1, NOPS) is the one-hot that idiom wanted.
+
+    Python already has the bases - 0b1010_1010, 0xDEAD_BEEF, 200, -5,
+    underscores and all - so the only thing added here is the width,
+    and the base you wrote is the base emitted. A negative value is
+    the two's complement pattern in that width, and .signed() at the
+    point of use decides how it is read, which is the rule the rest of
+    the language follows.
+    """
+    raise IsomorphError('const() is read from the AST, not executed')
+
+
 # Processes and child instances made while a block is elaborating, so
 # instances() can tell whether every one of them is still reachable.
 made_stack = []

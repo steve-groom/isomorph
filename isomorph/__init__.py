@@ -4,7 +4,7 @@ import sys
 
 from .signal import (signal, signals, vector, enum, struct,
     preload, attr, open_port, concat, replicate, bits, always_comb,
-    always_ff, always_ff_async_reset, assign, clock, instances,
+    always_ff, always_ff_async_reset, assign, clock, const, instances,
     IsomorphError)
 from .elaborate import block, Elaborated
 from .blackbox import blackbox, Blackbox
@@ -20,7 +20,7 @@ from .execute import SimError
 from .sim import Simulator
 
 __all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
-           'struct', 'preload', 'attr', 'open_port', 'clock',
+           'struct', 'preload', 'attr', 'open_port', 'clock', 'const',
            'concat',
            'replicate', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',

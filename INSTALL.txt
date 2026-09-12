@@ -236,7 +236,42 @@ is optional and each piece switches on one feature:
     g++        the verilator simulator backend
     make       building the Verilator model
     verilator  --lint of SystemVerilog, the verilator backend
-    ghdl       --lint of VHDL
+    ghdl       --lint of VHDL, and running the emitted VHDL against
+               the reference every cycle
+    yosys      reading both emitted languages into one netlist
+    yosys ghdl plugin
+               what lets yosys read the VHDL half, so the two can be
+               proved equivalent rather than only compared on the
+               stimulus a bench happened to apply
+
+On Debian and Ubuntu that is
+
+    sudo apt-get install -y build-essential verilator ghdl yosys \
+        yosys-plugin-ghdl
+
+and ./install.sh --deps runs the right one for the platform it finds.
+
+
+10.1 THE ONE QUIRK, ON DEBIAN AND UBUNTU
+----------------------------------------
+The packaged yosys-plugin-ghdl is built against GHDL's gcc backend
+and the packaged ghdl is the llvm one, so the plugin looks for the
+compiled IEEE libraries in a directory that does not exist and says
+
+    warning: ieee library directory '/usr/lib/ghdl/gcc/vhdl/ieee/v08/'
+             not found
+    error: cannot find "std" library
+
+The libraries are there, under the other backend's name. Point at them
+and it works:
+
+    export GHDL_PREFIX=/usr/lib/ghdl/llvm/vhdl
+    yosys -m ghdl -p "ghdl --std=08 build/thing/thing.vhd -e thing"
+
+Isomorph's own equivalence tests find that directory themselves, by
+looking for the one with ieee/v08 under it, so nothing has to be set
+for `python3 -m pytest` to work. This is only for driving yosys by
+hand.
 
 Ask what this machine has:
 

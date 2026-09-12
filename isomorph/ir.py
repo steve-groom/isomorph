@@ -15,6 +15,7 @@ class Expr:
     args: list = field(default_factory = list)
     value: object = None       # constant value, operator, name, field
     line: int = 0
+    base: str = None           # 'hex', 'bin', 'oct': how it was written
 
     def __repr__ (self):
         return render(self)

@@ -1126,12 +1126,25 @@ def match_lines (node, indent, nonblocking):
     return lines
 
 
-def sv_const (value, width, signed = False):
+def sv_const (value, width, signed = False, base = None):
+    """A sized literal, in the base it was written in.
+
+    0xDEAD_BEEF came out as 32'd3735928559, which is the same number
+    and unreadable. Python's ast keeps the source text of a literal,
+    so the base costs nothing to carry and the file the fitter
+    compiles says what the Python said."""
     value = int(value)
     if signed:
         return f"{width}'sd{value}"
     if width == 1:
         return "1'b1" if value else "1'b0"
+    masked = value & ((1 << width) - 1)
+    if base == 'hex':
+        return f"{width}'h{masked:0{(width + 3) // 4}X}"
+    if base == 'bin':
+        return f"{width}'b{masked:0{width}b}"
+    if base == 'oct':
+        return f"{width}'o{masked:0{(width + 2) // 3}o}"
     return f"{width}'d{value}"
 
 
@@ -1145,7 +1158,7 @@ def sv_expr (e, index = False):
     if op == 'const':
         if index:
             return str(int(e.value))
-        return sv_const(e.value, e.width, e.signed)
+        return sv_const(e.value, e.width, e.signed, e.base)
     if op == 'enum':
         return e.value.name
     if op == 'bit':
