@@ -1476,13 +1476,20 @@ class Analyser:
                                      f'{p.value} in concat takes '
                                      f'{p.width} bits')
             return ir.Expr('concat', sum(p.width for p in parts), args = parts)
-        if target is replicate or target is sign_extend:
+        if target is sign_extend:
+            inner = self.expression(node.args[0], scope)
+            width = self.constant(node.args[1], scope, node)
+            if width < inner.width:
+                self.error(node, f'sign_extend(): {inner.width} bits do '
+                           f'not fit in {width}. The second argument is '
+                           'the width of the answer, not how many bits '
+                           'to add.')
+            if width == inner.width:
+                return inner
+            return ir.Expr('extend', width, True, [inner])
+        if target is replicate:
             inner = self.expression(node.args[0], scope)
             count = self.constant(node.args[1], scope, node)
-            if target is sign_extend and inner.width != 1:
-                self.error(node, 'sign_extend() repeats the sign bit, so '
-                           f'it takes one bit and was given {inner.width}. '
-                           'Name the bit: sign_extend(x[7], 24).')
             return ir.Expr('replicate', inner.width * count, args = [inner],
                            value = count)
         if target is len:
@@ -1504,7 +1511,11 @@ class Analyser:
             if min_width(value) > width:
                 self.error(node, f'const(): {value} does not fit in '
                            f'{width} bits')
-            return ir.Expr('const', width, value = value,
+            # a negative value is the pattern it makes in that width,
+            # which is what the docstring promises and what the
+            # emitters can write. const(-1, 8) is eight ones
+            return ir.Expr('const', width,
+                           value = value & ((1 << width) - 1),
                            base = self.literal_base(node.args[0]))
         if target is vector:
             self.error(node, 'vector(W) declares a function local: '

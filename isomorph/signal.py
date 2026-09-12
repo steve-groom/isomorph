@@ -309,20 +309,27 @@ def replicate (value, count):
     raise IsomorphError('replicate() is read from the AST, not executed')
 
 
-def sign_extend (value, count):
-    """replicate() under the name of the one job it is really for.
+def sign_extend (value, width):
+    """value, sign-extended to `width` bits.
 
-    Counted across both trees on 2026-09-13: thirty-five of the
-    thirty-seven replicate() calls repeat a constant, which const()
-    now says better, and two extend a sign. Those two are the reason
-    the operator exists at all, so they get to say so:
+    The second argument is the width of the answer. That is the whole
+    point of it, and the reason it is not simply replicate() renamed:
 
-        concat(sign_extend(instr[2], WIDTHD - 3), instr[2:0])
+        next_rt.next = sign_extend(instr[2:0], WIDTHD)
 
-    reads as what it does, where the same line written with
-    replicate() makes the reader work out that the bit being repeated
-    is the top one. It is the same operator and the same emitted
-    replication; only the name is different.
+    against what you had to write before,
+
+        concat(replicate(instr[2], WIDTHD - 3), instr[2:0])
+
+    where the reader has to check that the repeated bit is the slice's
+    top one, that the slice is three wide, and that WIDTHD - 3 still
+    matches if the slice ever changes. Widen instr[2:0] to instr[3:0]
+    and the old line is quietly wrong by a bit; the new one cannot be.
+
+    A one-bit value extended to n bits is n copies of it, so the old
+    spelling keeps working under the new name. Extending to the width
+    it already has returns it unchanged, and asking for fewer bits
+    than it has is an error rather than a silent truncation.
     """
     raise IsomorphError('sign_extend() is read from the AST, not executed')
 
