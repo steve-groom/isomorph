@@ -385,8 +385,8 @@ def emit_module (m):
     lines = []
     lines += header_lines(m)
     ports = port_lines(m) if m.ports else []
-    rest = (enum_lines(m) + signal_lines(m) + function_lines(m)
-            + item_lines(m))
+    rest = (enum_lines(m) + signal_lines(m) + genvar_lines(m)
+            + function_lines(m) + item_lines(m))
     params = parameter_lines(m, rest + ports)
     if params:
         lines.append(f'module {m.name} #(')
@@ -747,9 +747,30 @@ def function_lines (m):
     return lines
 
 
+def array_groups (m):
+    """{array name: members in index order} for the instance arrays."""
+    groups = {}
+    for inst in m.instances:
+        if inst.array:
+            groups.setdefault(inst.array, []).append(inst)
+    for members in groups.values():
+        members.sort(key = lambda i: i.index)
+    return groups
+
+
 def item_lines (m):
     items = []
+    groups = array_groups(m)
+    done = set()
     for inst in m.instances:
+        if inst.array:
+            if inst.array in done:
+                continue
+            done.add(inst.array)
+            members = groups[inst.array]
+            items.append((members[0].line, 0, inst.array, 'array',
+                          members[0]))
+            continue
         items.append((inst.line, 0, inst.name, 'instance', inst))
     for a in m.assigns:
         items.append((a.line, 1, '', 'assign', a))
@@ -760,11 +781,67 @@ def item_lines (m):
     for _, _, _, kind, item in items:
         if kind == 'instance':
             lines += instance_lines(item)
+        elif kind == 'array':
+            lines += generate_lines(item)
         elif kind == 'assign':
             lines += assign_lines(item)
         else:
             lines += process_lines(item)
         lines.append('')
+    return lines
+
+
+def genvar_lines (m):
+    """One genvar per instance array, at module level.
+
+    Quartus Prime Standard will not parse a genvar declared inside the
+    loop header, which is the compact IEEE 1800 form every other tool
+    takes. Measured on 25.1std, 2026-09-12. So the declaration comes
+    out here and the loop only assigns it, which is the Verilog-2001
+    spelling and is accepted everywhere."""
+    names = []
+    for members in array_groups(m).values():
+        var = members[0].var
+        if var and var not in names:
+            names.append(var)
+    if not names:
+        return []
+    return [f'    genvar {name};' for name in names] + ['']
+
+
+def generate_lines (head):
+    """An array of instances as one labelled generate.
+
+    The label is the name the array has in the Python, and the index
+    is the one the loop counted with, so cells[2] in the fitter report
+    is cells[2] in the source. The instance inside the loop body is
+    called inst: both languages need an identifier there and there is
+    no name in the Python to take, so it is the same word every time
+    rather than a different invention each time.
+    """
+    lines = comment_lines(head.comments, 4)
+    var = head.var or 'k'
+    lines.append('    generate')
+    lines.append(f'        for ({var} = 0; {var} < {head.count}; '
+                 f'{var}++) begin : {head.array}')
+    if head.params:
+        values = ', '.join(f'.{n}({sv_number(v)})'
+                           for n, v in sorted(head.params.items()))
+        lines.append(f'            {head.module} #({values}) inst (')
+    else:
+        lines.append(f'            {head.module} inst (')
+    formals = list(head.ports.items())
+    for i, (formal, actual) in enumerate(formals):
+        comma = ',' if i < len(formals) - 1 else ''
+        kind, payload = head.shape.get(formal, ('same', actual))
+        if kind == 'index':
+            mapped = f'{payload}[{var}]'
+        else:
+            mapped = sv_expr(payload) if payload is not None else ''
+        lines.append(f'                .{formal}({mapped}){comma}')
+    lines.append('            );')
+    lines.append('        end')
+    lines.append('    endgenerate')
     return lines
 
 

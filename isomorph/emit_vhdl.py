@@ -823,9 +823,29 @@ class Context:
             self.sig_kind[s.name] = s.kind
 
 
+def array_groups (m):
+    groups = {}
+    for inst in m.instances:
+        if inst.array:
+            groups.setdefault(inst.array, []).append(inst)
+    for members in groups.values():
+        members.sort(key = lambda i: i.index)
+    return groups
+
+
 def item_lines (ctx):
     items = []
+    groups = array_groups(ctx.m)
+    done = set()
     for inst in ctx.m.instances:
+        if inst.array:
+            if inst.array in done:
+                continue
+            done.add(inst.array)
+            members = groups[inst.array]
+            items.append((members[0].line, 0, inst.array, 'array',
+                          members[0]))
+            continue
         items.append((inst.line, 0, inst.name, 'instance', inst))
     for a in ctx.m.assigns:
         items.append((a.line, 1, '', 'assign', a))
@@ -836,11 +856,51 @@ def item_lines (ctx):
     for _, _, _, kind, item in items:
         if kind == 'instance':
             lines += instance_lines(ctx, item)
+        elif kind == 'array':
+            lines += generate_lines(ctx, item)
         elif kind == 'assign':
             lines += assign_lines(ctx, item)
         else:
             lines += process_lines(ctx, item)
         lines.append('')
+    return lines
+
+
+def generate_lines (ctx, head):
+    """An array of instances as one labelled for ... generate."""
+    lines = comment_lines(head.comments, 2)
+    var = head.var or 'k'
+    lines.append(f'  {head.array} : for {var} in 0 to {head.count - 1} '
+                 'generate')
+    lines.append(f'    inst : entity work.{head.module}')
+    child = ctx.by_name.get(head.module)
+    if child is not None:
+        values = dict(child.parameters)
+        values.update(head.params)
+        gens = [(n, v) for n, v in values.items()
+                if isinstance(v, int) and not isinstance(v, bool)]
+        wide = ctx.wide_all.get(head.module, {})
+        if gens:
+            lines.append('      generic map (')
+            for i, (n, v) in enumerate(gens):
+                comma = ',' if i < len(gens) - 1 else ''
+                text = wide_literal(v, wide[n]) if n in wide else str(v)
+                lines.append(f'        {n} => {text}{comma}')
+            lines.append('      )')
+    lines.append('      port map (')
+    formals = list(head.ports.items())
+    for i, (formal, actual) in enumerate(formals):
+        comma = ',' if i < len(formals) - 1 else ''
+        kind, payload = head.shape.get(formal, ('same', actual))
+        if kind == 'index':
+            mapped = f'{payload}({var})'
+        elif payload is None:
+            mapped = 'open'
+        else:
+            mapped = vhdl_expr(ctx, payload)
+        lines.append(f'        {formal} => {mapped}{comma}')
+    lines.append('      );')
+    lines.append('  end generate;')
     return lines
 
 

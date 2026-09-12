@@ -135,7 +135,16 @@ def struct_lines (m):
         lines += field_lines(p.name, p.width, p.array, p.name in ff)
     for s in m.signals:
         lines += field_lines(s.name, s.width, s.array, s.name in ff)
+    done = set()
     for inst in m.instances:
+        if inst.array:
+            if inst.array in done:
+                continue
+            done.add(inst.array)
+            count = max(i.index for i in m.instances
+                        if i.array == inst.array) + 1
+            lines.append(f'    {inst.module} {inst.array}[{count}];')
+            continue
         lines.append(f'    {inst.module} {inst.name};')
     lines.append(f'}} {m.name};')
     lines.append('')

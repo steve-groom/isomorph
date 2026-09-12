@@ -175,6 +175,34 @@ class SignalArray(list):
             element.parent = self
 
 
+def array_view (elements):
+    """An array port over signals that already exist.
+
+    A slice of a signals() array is an ordinary Python list, and so is
+    a list comprehension over one. Both are what a design hands a
+    child when it splits an array in half - a reduction tree does it
+    at every level - and both arrive here to become a real array port
+    rather than a list nothing knows how to name.
+
+    The elements are shared, not copied: the child's port and the
+    parent's array are the same wires, which is the whole point.
+    """
+    elements = list(elements)
+    widths = {e.width for e in elements}
+    if len(widths) != 1:
+        raise IsomorphError(
+            'an array port holds one width, and this one was given '
+            + ', '.join(str(w) for w in sorted(widths))
+            + '. Elements of one array share a width (SPEC 5.15).')
+    view = SignalArray.__new__(SignalArray)
+    list.__init__(view, elements)
+    view.width = elements[0].width
+    view.name = None
+    view.attributes = {}
+    view.line = _caller_line()
+    return view
+
+
 def preload (array, values):
     """The contents a memory holds when the device is configured.
 

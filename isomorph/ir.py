@@ -156,6 +156,16 @@ class Instance:
     line: int = 0
     comments: list = field(default_factory = list)
     params: dict = field(default_factory = dict)   # overrides, if any
+    # one of an array built by a loop (SPEC 5.15). Every backend that
+    # runs a design sees the members one at a time, named array[k];
+    # the two HDL emitters collapse them back into one generate.
+    array: str = None          # the array's name, or None
+    index: int = 0             # which member this is
+    count: int = 0             # how many there are
+    var: str = None            # the genvar, on member 0
+    shape: dict = field(default_factory = dict)    # formal -> how it
+                               # varies, on member 0: ('same', Expr) or
+                               # ('index', base name)
 
 
 @dataclass

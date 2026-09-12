@@ -8,7 +8,7 @@ import sys
 from types import FunctionType, SimpleNamespace
 
 from .signal import (Signal, SignalArray, EnumType, StructType,
-    Process, Assign, Instances, OpenPort, IsomorphError,
+    Process, Assign, Instances, OpenPort, IsomorphError, array_view,
     elaboration_stack, made_stack, note_made)
 
 
@@ -53,6 +53,9 @@ class Elaborated:
         self.instances = {}                 # name -> Elaborated
         self.open_ports = set()             # formals connected to open_port()
         self.instance_name = None
+        self.array_name = None              # set when built in a loop
+        self.array_index = 0
+        self.array_count = 0
         self._name_override = None          # set by _resolve_names
         self.line = 0                       # the instantiating call's line
         self.port_names = {}                # id(leaf signal) -> port name
@@ -60,12 +63,18 @@ class Elaborated:
         self.assigns = list(assigns)
 
     def _sort (self, arguments, frame_locals):
-        for name, value in arguments.items():
+        for name, value in list(arguments.items()):
+            # a slice of a signals() array, or a list built from one,
+            # is an array port like any other
+            if (isinstance(value, (list, tuple))
+                    and not isinstance(value, SignalArray)
+                    and value and all(isinstance(e, Signal)
+                                      for e in value)):
+                value = array_view(value)
+                arguments[name] = value
+                self.arguments[name] = value
             if isinstance(value, (Signal, SignalArray, SimpleNamespace,
-                                  OpenPort)) or (isinstance(value, list) and
-                                  value
-                                  and isinstance(value[0],
-                                                 Signal)):
+                                  OpenPort)):
                 self.ports[name] = value
                 self.port_names.update(_port_names(name, value))
             elif isinstance(value, (int, bool, EnumType, StructType, str)):
@@ -108,13 +117,24 @@ class Elaborated:
                     and not isinstance(value, Process)):
                 self.functions[name] = value
             elif isinstance(value, (tuple, list)):
+                children = [e for e in value if isinstance(e, Elaborated)]
                 for index, element in enumerate(value):
                     if isinstance(element, Signal) and element.name is None:
                         element.name = f'{name}_{index}'
                         self.signals[element.name] = element
                     elif isinstance(element, Elaborated):
-                        iname = f'{name}_{index}'
+                        # array[k], not array_k. The index is one the
+                        # author wrote; an underscore and a number is a
+                        # name invented on their behalf, which SPEC 4.5
+                        # says does not happen. The analyser checks the
+                        # array is regular enough to emit as a generate
+                        # and refuses it otherwise.
+                        iname = f'{name}[{element_index(children, element)}]'
                         element.instance_name = iname
+                        element.array_name = name
+                        element.array_index = element_index(children,
+                                                            element)
+                        element.array_count = len(children)
                         self.instances[iname] = element
             elif isinstance(value, Instances):
                 pass
@@ -264,6 +284,13 @@ class Elaborated:
             for nodes in builds.values():
                 for node in nodes:
                     node._name_override = block
+
+
+def element_index (children, element):
+    for index, child in enumerate(children):
+        if child is element:
+            return index
+    return 0
 
 
 def _port_names (name, value):

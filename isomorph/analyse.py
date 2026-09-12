@@ -197,9 +197,77 @@ class Analyser:
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
         self.check_names(mod)
+        self.check_instance_arrays(mod)
         self.check_unused(mod)
         self.check_comb_loops(mod)
         return mod
+
+    def check_instance_arrays (self, mod):
+        """A loop over instances is a generate, or it is an error.
+
+        A list of children used to become cells_0, cells_1 and so on:
+        names nobody typed, which is the MyHDL behaviour this project
+        was a reaction to and which SPEC 4.5 forbids. They are
+        cells[0], cells[1] now, and the emitters write them back as
+        one labelled generate, so the only name invented is the
+        instance label inside the loop body.
+
+        That only works if the array is regular: the same child every
+        time, the same parameters, and every port either the same wire
+        for all of them or element k of one array. Anything else is an
+        error telling the author to name each instance, which gives
+        them better names than a loop was ever going to.
+        """
+        groups = {}
+        for inst in mod.instances:
+            if inst.array:
+                groups.setdefault(inst.array, []).append(inst)
+        # a genvar is declared at module level, which is the only
+        # spelling Quartus takes, so two arrays may not share one
+        spent = set()
+        for name, members in groups.items():
+            members.sort(key = lambda i: i.index)
+            head = members[0]
+            for other in members[1:]:
+                if other.module != head.module:
+                    raise ConversionError(
+                        f'{name} holds a {head.module} and a '
+                        f'{other.module}. An array of instances is one '
+                        'child repeated, so that it can be emitted as a '
+                        'generate rather than as instances with invented '
+                        'names. Give each of these its own name.',
+                        self.file, head.line)
+                if other.params != head.params:
+                    raise ConversionError(
+                        f'{name} builds {head.module} with two different '
+                        'parameter sets, so its members are not the same '
+                        'module. Give each of these its own name.',
+                        self.file, head.line)
+            shape = {}
+            for formal in head.ports:
+                values = [i.ports.get(formal) for i in members]
+                texts = [None if v is None else v.value for v in values]
+                if len(set(texts)) == 1:
+                    shape[formal] = ('same', values[0])
+                    continue
+                base = indexed_base(texts)
+                if base is None:
+                    listed = ', '.join('open' if t is None else t
+                                       for t in texts)
+                    raise ConversionError(
+                        f'{name}[k].{formal} is connected to {listed}. '
+                        'Every member of an array of instances takes '
+                        'either the same wire or element k of one array, '
+                        'because the array is emitted as a single '
+                        'generate. This one is not that shape, so give '
+                        'each instance its own name and connect them '
+                        'one at a time.',
+                        self.file, head.line)
+                shape[formal] = ('index', base)
+            head.shape = shape
+            head.count = len(members)
+            head.var = genvar_name(mod, spent)
+            spent.add(head.var)
 
     def _port_leaves (self, name, value):
         out = []
@@ -258,12 +326,24 @@ class Analyser:
         for formal, actual in self.instance_ports(child).items():
             if actual is None:
                 ports[formal] = None
-            else:
-                aname = self.name_of(actual)
-                ports[formal] = ir.Expr('ref', actual.width, value = aname)
-                self.read.add(aname.split('[')[0])
+                continue
+            aname = self.name_of(actual)
+            if aname is None:
+                raise ConversionError(
+                    f'{child.instance_name}.{formal} is connected to '
+                    'something this block has no name for. A slice of an '
+                    'array, or a list built from one, is a wire here only '
+                    'if it is a whole array: pass the array itself, or '
+                    'give the child one element at a time. Connecting '
+                    'part of an array is ROADMAP item 11.',
+                    self.file, child.line)
+            ports[formal] = ir.Expr('ref', actual.width, value = aname)
+            self.read.add(aname.split('[')[0])
         return ir.Instance(child.instance_name, child.module_name, ports,
-                           child.line, self.leading_comments(child.line))
+                           child.line, self.leading_comments(child.line),
+                           array = child.array_name,
+                           index = child.array_index,
+                           count = child.array_count)
 
     # ---- bodies ------------------------------------------------------------
     def _tree (self, func):
@@ -1412,6 +1492,42 @@ class Analyser:
                 self.warnings.append(
                     f'unread signal {s.name}: something drives it and '
                     'nothing reads it')
+
+
+def indexed_base (texts):
+    """The array every member indexes by its own position, or None.
+
+    ['d[0]', 'd[1]', 'd[2]'] is the array d. Anything else, including
+    an order that is not 0, 1, 2, is not one."""
+    base = None
+    for index, text in enumerate(texts):
+        if not text or not text.endswith(f'[{index}]'):
+            return None
+        here = text[:text.rindex('[')]
+        if base is None:
+            base = here
+        elif here != base:
+            return None
+    return base
+
+
+def genvar_name (mod, spent = ()):
+    """A loop index no other name in the module has taken.
+
+    The genvar is declared at module level rather than inside the for,
+    because that is the only spelling Quartus Prime Standard parses
+    (25.1std, measured 2026-09-12; it rejects `for (genvar k = 0...)`
+    outright). So it shares a namespace with everything else here, and
+    with the other arrays."""
+    taken = {p.name for p in mod.ports} | {s.name for s in mod.signals}
+    taken |= set(mod.constants) | set(mod.parameters) | set(mod.enums)
+    taken |= {p.name for p in mod.processes} | set(spent)
+    for kind in mod.enums.values():
+        taken |= {member.name for member in kind.members}
+    for name in ['k'] + [f'k{n}' for n in range(100)]:
+        if name not in taken:
+            return name
+    return 'k'
 
 
 def root (expr):
