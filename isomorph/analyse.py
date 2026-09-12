@@ -1099,6 +1099,19 @@ class Analyser:
         e.line = self.line_base + getattr(node, 'lineno', 0)
         return e
 
+    def is_sized (self, node, scope):
+        """True if this argument said how wide it is.
+
+        True and False are one bit and say so. const(value, width)
+        says so in as many words, and warning that it took the width
+        it was given would be nonsense.
+        """
+        if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            return scope.names.get(node.func.id) is const
+        return False
+
     def literal_base (self, node):
         """How the number was written, so it can be written that way
         again. Hex in the Python is hex in the HDL: the same argument
@@ -1456,11 +1469,11 @@ class Analyser:
         if target is concat:
             parts = [self.expression(a, scope) for a in node.args]
             for a, p in zip(node.args, parts):
-                if (p.op == 'const' and not (isinstance(a, ast.Constant)
-                                             and isinstance(a.value, bool))):
-                    self.warnings.append(f'{self.current}: unsized constant '
-                                         f'{p.value} in concat takes '
-                                         f'{p.width} bits')
+                if p.op != 'const' or self.is_sized(a, scope):
+                    continue
+                self.warnings.append(f'{self.current}: unsized constant '
+                                     f'{p.value} in concat takes '
+                                     f'{p.width} bits')
             return ir.Expr('concat', sum(p.width for p in parts), args = parts)
         if target is replicate:
             inner = self.expression(node.args[0], scope)
