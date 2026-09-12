@@ -41,7 +41,22 @@ from .signal import Signal, OpenPort, IsomorphError, note_made
 class BlackboxType:
     """What blackbox() returns: call it to make one instance."""
 
-    def __init__ (self, module, inputs, outputs, params, source):
+    def __init__ (self, module, inputs, outputs, params, source,
+                  inouts = None):
+        if inouts:
+            raise IsomorphError(
+                f'blackbox {module}: ' + ', '.join(sorted(inouts))
+                + ' is bidirectional, and isomorph has no bidirectional '
+                'port yet. Split it into the three wires the fitter uses '
+                'anyway, an output, an output enable and an input, and '
+                'connect those; the tristate itself then lives wherever '
+                'your flow puts it. Efinity requires exactly that split '
+                'at the top level and generates the buffer in the '
+                'Interface Designer, which is why isomorph.ifaces spells '
+                'a memory bus dq_o, dq_oe, dq_i. Quartus, Vivado and '
+                'Lattice all take an inout at the top instead, and a '
+                'bidirectional port that emits the right shape for each '
+                'is ROADMAP item 14.')
         self.module = module
         self.inputs = dict(inputs or {})
         self.outputs = dict(outputs or {})
@@ -152,10 +167,16 @@ class Blackbox:
 
 
 def blackbox (module, inputs = None, outputs = None, params = None,
-              source = None):
-    """Declare something the fitter has and isomorph does not."""
+              source = None, inouts = None):
+    """Declare something the fitter has and isomorph does not.
+
+    inouts exists only to be refused with a reason. A vendor part
+    often has one - an IO buffer, a memory data bus - and without the
+    argument the error would be that a port is missing, which reads
+    like a mistake in the declaration rather than the limit it is.
+    """
     if not isinstance(module, str) or not module.isidentifier():
         raise IsomorphError(
             f'blackbox({module!r}): the first argument is the module '
             'name as the fitter knows it.')
-    return BlackboxType(module, inputs, outputs, params, source)
+    return BlackboxType(module, inputs, outputs, params, source, inouts)
