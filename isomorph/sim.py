@@ -36,6 +36,8 @@ class Simulator:
         # design the fitter would refuse is the gap this project exists
         # to close
         self.modules, self.warnings = analyse(top, allow_severe)
+        from .emit_c99 import refuse_blackbox
+        refuse_blackbox(self.modules, f'the {backend} backend')
         self.backend = backend
         self.by_name = {m.name: m for m in self.modules}
         self.top = self.modules[-1]

@@ -119,6 +119,8 @@ def _walk_field (prefix, name, width, array, value):
 
 class Executor:
     def __init__ (self, modules):
+        from .emit_c99 import refuse_blackbox
+        refuse_blackbox(modules, 'the Python simulator')
         if not modules:
             raise SimError('no modules to execute')
         self.modules = modules

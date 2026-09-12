@@ -9,6 +9,7 @@ import tokenize
 from types import SimpleNamespace, FunctionType
 
 from . import ir
+from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember,
     StructType, Process, Assign, Vector, IsomorphError, concat, replicate,
     bits, vector)
@@ -339,8 +340,15 @@ class Analyser:
                     self.file, child.line)
             ports[formal] = ir.Expr('ref', actual.width, value = aname)
             self.read.add(aname.split('[')[0])
+        # a block bakes its parameters into a specialised module, so
+        # an override would say nothing. A blackbox is the other way
+        # round: the parameters are how the vendor's part is
+        # configured and the only place they can be said is here
+        params = dict(getattr(child, 'parameters', {})) \
+            if isinstance(child, Blackbox) else {}
         return ir.Instance(child.instance_name, child.module_name, ports,
                            child.line, self.leading_comments(child.line),
+                           params = params,
                            array = child.array_name,
                            index = child.array_index,
                            count = child.array_count)
@@ -1708,6 +1716,26 @@ def fatal_warnings (warnings):
     return out
 
 
+def blackbox_module (node):
+    """The IR for something the fitter has and isomorph does not.
+
+    Ports with the directions that were declared, and no body. The
+    emitters write a stub for it so a linter has something to read,
+    and the real one is handed to the tool instead.
+    """
+    ports = []
+    for name, width in node.kind.inputs.items():
+        ports.append(ir.Port(name, width, 'in',
+                             'bit' if width == 1 else 'vector'))
+    for name, width in node.kind.outputs.items():
+        ports.append(ir.Port(name, width, 'out',
+                             'bit' if width == 1 else 'vector'))
+    header = node.kind.source or ''
+    return ir.Module(node.module_name, node.block_name,
+                     dict(node.kind.params), ports, [], {}, {}, [], [],
+                     [], [], '', header, True, node.kind.source)
+
+
 def analyse (elaborated, allow_severe = False):
     """IR modules for every distinct block in the hierarchy, leaves first,
     and the warnings gathered.
@@ -1717,6 +1745,11 @@ def analyse (elaborated, allow_severe = False):
     modules, warnings = [], []
     directions = {}
     for node in elaborated.walk():
+        if isinstance(node, Blackbox):
+            m = blackbox_module(node)
+            directions[m.name] = {p.name: p.direction for p in m.ports}
+            modules.append(m)
+            continue
         a = Analyser(node, directions)
         m = a.module()
         directions[m.name] = {p.name: p.direction for p in m.ports}

@@ -10,6 +10,7 @@ from types import FunctionType, SimpleNamespace
 from .signal import (Signal, SignalArray, EnumType, StructType,
     Process, Assign, Instances, OpenPort, IsomorphError, array_view,
     elaboration_stack, made_stack, note_made)
+from .blackbox import Blackbox
 
 
 # past this a module name is a digest of its parameters instead
@@ -108,7 +109,7 @@ class Elaborated:
                 self.enums[name] = value
             elif isinstance(value, Process):
                 self.processes.append(value)
-            elif isinstance(value, Elaborated):
+            elif isinstance(value, (Elaborated, Blackbox)):
                 value.instance_name = name
                 self.instances[name] = value
             elif isinstance(value, bool) or isinstance(value, int):
@@ -117,12 +118,13 @@ class Elaborated:
                     and not isinstance(value, Process)):
                 self.functions[name] = value
             elif isinstance(value, (tuple, list)):
-                children = [e for e in value if isinstance(e, Elaborated)]
+                children = [e for e in value
+                            if isinstance(e, (Elaborated, Blackbox))]
                 for index, element in enumerate(value):
                     if isinstance(element, Signal) and element.name is None:
                         element.name = f'{name}_{index}'
                         self.signals[element.name] = element
-                    elif isinstance(element, Elaborated):
+                    elif isinstance(element, (Elaborated, Blackbox)):
                         # array[k], not array_k. The index is one the
                         # author wrote; an underscore and a number is a
                         # name invented on their behalf, which SPEC 4.5
@@ -169,7 +171,7 @@ class Elaborated:
                     for index, each in enumerate(element):
                         each.name = f'{path}[{index}]'
                 self.arrays[element.name] = element
-            elif isinstance(element, Elaborated):
+            elif isinstance(element, (Elaborated, Blackbox)):
                 element.instance_name = path
                 self.instances[path] = element
             elif isinstance(element, SimpleNamespace):

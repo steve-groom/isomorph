@@ -48,6 +48,19 @@ def fit_comment (line, indent, marker):
 SV_INT_MAX = 2 ** 31 - 1
 
 
+def sv_param (value):
+    """A parameter value as SystemVerilog.
+
+    Vendor IP is configured with strings as often as with numbers -
+    OPERATION_MODE = "NORMAL" - so a string goes in quoted and
+    anything else through the number rules."""
+    if isinstance(value, str):
+        return '"' + value.replace('"', '') + '"'
+    if isinstance(value, bool):
+        return "1'b1" if value else "1'b0"
+    return sv_number(value)
+
+
 def sv_number (value):
     """A parameter or localparam value.
 
@@ -171,7 +184,7 @@ def sv_files (modules):
                     + shared + f'\n`endif\n'))
     for m in modules:
         text = emit_module(m)
-        if header:
+        if header and not m.blackbox:
             text = f'`include "{header}"\n\n' + text
         out.append((m.name + '.sv', text + '\n'))
     return out
@@ -189,12 +202,27 @@ def write_sv_files (modules, directory, listing = True):
         written.append(path)
     if listing:
         top = os.path.basename(directory)
+        # a blackbox stub is listed on its own. A linter wants it, so
+        # that it has ports to check the instance against; the fitter
+        # must not have it, because it is given the vendor's real one
+        # and two modules of a name is an error there
+        stubs = {m.name + '.sv' for m in modules if m.blackbox}
         listing_path = os.path.join(directory, top + '.f')
         with open(listing_path, 'w', encoding = 'ascii',
                   newline = '\n') as f:
             for path in written:
-                f.write(os.path.basename(path) + '\n')
+                if os.path.basename(path) not in stubs:
+                    f.write(os.path.basename(path) + '\n')
         written.append(listing_path)
+        if stubs:
+            stub_path = os.path.join(directory, top + '_blackbox.f')
+            with open(stub_path, 'w', encoding = 'ascii',
+                      newline = '\n') as f:
+                f.write('// stubs for lint only. Give the fitter the\n'
+                        "// vendor's own file instead of these.\n")
+                for name in sorted(stubs):
+                    f.write(name + '\n')
+            written.append(stub_path)
     return written
 
 
@@ -381,7 +409,52 @@ def wrap_long_lines (lines, marker, step):
             out += fold_line(tail, lead + step + step)
     return out
 
+def blackbox_lines (m):
+    """A stub so a linter has something to read.
+
+    Ports and no body, marked black_box, which is the attribute
+    Quartus and Synplify both know. It is written to its own file and
+    listed separately from the design, because the fitter is given the
+    vendor's real one instead and two modules of a name is an error.
+    """
+    lines = []
+    if m.blackbox_source:
+        lines += [as_comment(line)
+                  for line in fit_comment(m.blackbox_source, 0, '//')]
+    lines.append('// A stub. The fitter is given the real one; this is')
+    lines.append('// here so that a lint has ports to check against.')
+    lines.append('//')
+    lines.append('// The lint_off pair is the only pragma isomorph')
+    lines.append('// emits, and it is in this file rather than in a')
+    lines.append('// design: a module with no body has every output')
+    lines.append('// undriven and every input unused, which is what a')
+    lines.append('// stub is, and saying so here is better than')
+    lines.append('// driving them to nothing and calling it a model.')
+    lines.append('/* verilator lint_off UNDRIVEN */')
+    lines.append('/* verilator lint_off UNUSEDSIGNAL */')
+    lines.append('/* verilator lint_off UNUSEDPARAM */')
+    lines.append('(* black_box *)')
+    if m.parameters:
+        lines.append(f'module {m.name} #(')
+        kept = list(m.parameters.items())
+        for index, (name, value) in enumerate(kept):
+            comma = ',' if index < len(kept) - 1 else ''
+            lines.append(f'    parameter {name} = {sv_param(value)}{comma}')
+        lines.append(') (')
+    else:
+        lines.append(f'module {m.name} (')
+    lines += port_lines(m)
+    lines.append(');')
+    lines.append('endmodule')
+    lines.append('/* verilator lint_on UNUSEDPARAM */')
+    lines.append('/* verilator lint_on UNUSEDSIGNAL */')
+    lines.append('/* verilator lint_on UNDRIVEN */')
+    return '\n'.join(wrap_long_lines(lines, '//', 4))
+
+
 def emit_module (m):
+    if m.blackbox:
+        return blackbox_lines(m)
     lines = []
     lines += header_lines(m)
     ports = port_lines(m) if m.ports else []
@@ -423,6 +496,7 @@ def header_lines (m):
     lines = []
     for line in m.header.strip('\n').splitlines():
         if line.strip():
+            check_comment(line)
             lines += fit_comment('// ' + line, 0, '//')
         else:
             lines.append('//')
@@ -440,7 +514,38 @@ def reason_lines (reason, indent, marker):
     return [f'{pad}{marker} {line}' for line in body]
 
 
+# A comment beginning with one of these is not a comment to a Verilog
+# tool, it is a directive. Verilator reads `// Verilator harness ...`
+# as a pragma and fails the lint on it, whatever the case and whatever
+# the spacing; synopsys, synthesis and pragma are the same trick in
+# other tools, and translate_off is the one that silently deletes the
+# lines after it.
+COMMENT_PRAGMAS = ('verilator', 'synopsys', 'synthesis', 'pragma')
+
+
+def check_comment (text):
+    """Refuse a comment a tool would read as an instruction.
+
+    Comments travel into the HDL, which is the point of them here, and
+    that makes the first word of one load-bearing. This project says a
+    Python name that is a reserved word in an output language is an
+    error rather than a silent rename (SPEC 4.5); the same applies to
+    a comment that is a directive in an output language, and for the
+    same reason: the alternative is rewriting what the author wrote.
+    """
+    body = text.lstrip('#').strip().lower()
+    for word in COMMENT_PRAGMAS:
+        if body.startswith(word):
+            raise ConversionError(
+                f'this comment starts with {word!r}, so a Verilog tool '
+                'reads it as a directive rather than as a comment, and '
+                f'verilator --lint-only fails on it:\n  {text.strip()}\n'
+                'Comments are emitted as they were written, so reword '
+                f'it to put {word!r} anywhere but first.')
+
+
 def as_comment (text):
+    check_comment(text)
     if text.startswith('#'):
         return '//' + text[1:]
     return '// ' + text
@@ -849,7 +954,7 @@ def instance_lines (inst):
     lines = comment_lines(inst.comments, 4)
     formals = list(inst.ports.items())
     if inst.params:
-        values = ', '.join(f'.{n}({sv_number(v)})'
+        values = ', '.join(f'.{n}({sv_param(v)})'
                            for n, v in sorted(inst.params.items()))
         lines.append(f'    {inst.module} #({values}) {inst.name} (')
     else:

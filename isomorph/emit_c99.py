@@ -40,7 +40,29 @@ def check_width (w, where):
             'anyway.')
 
 
+def refuse_blackbox (modules, what):
+    """A design with a blackbox in it is not one this can run.
+
+    There is no model of the part here and there is deliberately not
+    going to be one: a Python stand-in inside the @block tree would
+    mean the simulated hierarchy and the fitted hierarchy are
+    different trees, which is the failure this project refuses. The
+    way to simulate it is a Verilator harness that links the vendor's
+    own model, which is the shape verify/run_sdram.sh already has.
+    """
+    named = [m.name for m in modules if m.blackbox]
+    if not named:
+        return
+    raise ConversionError(
+        f'{what} cannot run this design: it instantiates '
+        + ', '.join(named) + ', which isomorph does not generate and '
+        'has no model of. Convert it and drive the emitted '
+        'SystemVerilog from a Verilator harness that links the '
+        "vendor's model, the way verify/run_sdram.sh does.")
+
+
 def emit_c99 (modules):
+    refuse_blackbox(modules, 'the C99 backend')
     """Return (header_text, source_text)."""
     if not modules:
         return '', ''
@@ -56,6 +78,7 @@ def emit_c99 (modules):
 
 
 def write_c99 (modules, c_path):
+    refuse_blackbox(modules, 'the C99 backend')
     header, source = emit_c99(modules)
     base, _ = os.path.splitext(c_path)
     h_path = base + '.h'

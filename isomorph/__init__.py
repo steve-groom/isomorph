@@ -6,6 +6,7 @@ from .signal import (signal, signals, vector, enum, struct,
     preload, attr, open_port, concat, replicate, bits, always_comb,
     always_ff, always_ff_async_reset, assign, instances, IsomorphError)
 from .elaborate import block, Elaborated
+from .blackbox import blackbox, Blackbox
 from .analyse import analyse, fatal_warnings, ConversionError
 from .dump import dump
 from .emit_sv import emit_sv, write_sv, write_sv_files, lint_sv
@@ -16,8 +17,8 @@ from .sidecar import sidecar, write_sidecar
 from .execute import SimError
 from .sim import Simulator
 
-__all__ = ['block', 'signal', 'signals', 'vector', 'enum', 'struct',
-           'preload', 'attr', 'open_port', 'concat',
+__all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
+           'struct', 'preload', 'attr', 'open_port', 'concat',
            'replicate', 'bits', 'always_comb', 'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',

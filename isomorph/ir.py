@@ -183,6 +183,9 @@ class Module:
     instances: list
     source: str = ''
     header: str = ''
+    # something the fitter has and isomorph does not: ports, no body
+    blackbox: bool = False
+    blackbox_source: str = None
 
 
 def render (e):

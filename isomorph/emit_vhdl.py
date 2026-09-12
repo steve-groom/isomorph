@@ -132,6 +132,10 @@ def emit_vhdl (modules):
     if pkg:
         parts.append(pkg)
     for m in modules:
+        if m.blackbox:
+            # a component declaration in whoever instantiates it, and
+            # the vendor's own entity handed to the tool
+            continue
         parts.append(BAR_VHDL + '\n' + emit_unit(m, by_name,
                                                  modules[-1].name, wide))
     text = '\n\n'.join(parts)
@@ -153,6 +157,8 @@ def vhdl_files (modules):
     if pkg:
         out.append((f'{top}_pkg.vhd', pkg + '\n'))
     for m in modules:
+        if m.blackbox:
+            continue
         out.append((m.name + '.vhd',
                     emit_unit(m, by_name, top, wide) + '\n'))
     return out
@@ -674,6 +680,7 @@ def architecture_lines (m, by_name, wide = None):
     lines += signal_lines(m)
     lines += attribute_lines(m)
     lines += function_decl_lines(ctx)
+    lines += component_lines(ctx)
     lines.append('  function to_sl (value : boolean) return std_logic is')
     lines.append('  begin')
     lines.append("    if value then")
@@ -689,6 +696,43 @@ def architecture_lines (m, by_name, wide = None):
     else:
         lines.append('  null;')
     lines.append('end architecture rtl;')
+    return lines
+
+
+def component_lines (ctx):
+    """One component per blackbox this module instantiates.
+
+    A component is the VHDL way to name something the design does not
+    contain: it is declared here, instantiated below, and bound to the
+    vendor's entity when the tool elaborates. Nothing is written for
+    it as a design unit, so ghdl -a is happy and the fitter gets the
+    real one.
+    """
+    lines = []
+    seen = []
+    for inst in ctx.m.instances:
+        child = ctx.by_name.get(inst.module)
+        if child is None or not child.blackbox or child.name in seen:
+            continue
+        seen.append(child.name)
+        if child.blackbox_source:
+            lines += comment_lines([child.blackbox_source], 2)
+        lines.append(f'  component {child.name} is')
+        gens = [(n, v) for n, v in child.parameters.items()
+                if isinstance(v, (int, str)) and not isinstance(v, bool)]
+        if gens:
+            lines.append('    generic (')
+            for i, (n, v) in enumerate(gens):
+                semi = ';' if i < len(gens) - 1 else ''
+                kind = 'string' if isinstance(v, str) else 'integer'
+                lines.append(f'      {n} : {kind} := {vhdl_param(v)}{semi}')
+            lines.append('    );')
+        if child.ports:
+            lines.append('    port (')
+            lines += ['  ' + line for line in port_lines(child)]
+            lines.append('    );')
+        lines.append('  end component;')
+        lines.append('')
     return lines
 
 
@@ -878,7 +922,7 @@ def generate_lines (ctx, head):
         values = dict(child.parameters)
         values.update(head.params)
         gens = [(n, v) for n, v in values.items()
-                if isinstance(v, int) and not isinstance(v, bool)]
+                if isinstance(v, (int, str)) and not isinstance(v, bool)]
         wide = ctx.wide_all.get(head.module, {})
         if gens:
             lines.append('      generic map (')
@@ -904,21 +948,31 @@ def generate_lines (ctx, head):
     return lines
 
 
+def vhdl_param (value):
+    if isinstance(value, str):
+        return '"' + value.replace('"', '') + '"'
+    return str(int(value))
+
+
 def instance_lines (ctx, inst):
     lines = comment_lines(inst.comments, 2)
-    lines.append(f'  {inst.name} : entity work.{inst.module}')
     child = ctx.by_name.get(inst.module)
+    if child is not None and child.blackbox:
+        lines.append(f'  {inst.name} : {inst.module}')
+    else:
+        lines.append(f'  {inst.name} : entity work.{inst.module}')
     if child is not None:
         values = dict(child.parameters)
         values.update(inst.params)
         gens = [(n, v) for n, v in values.items()
-                if isinstance(v, int) and not isinstance(v, bool)]
+                if isinstance(v, (int, str)) and not isinstance(v, bool)]
         wide = ctx.wide_all.get(inst.module, {})
         if gens:
             lines.append('    generic map (')
             for i, (n, v) in enumerate(gens):
                 comma = ',' if i < len(gens) - 1 else ''
-                text = wide_literal(v, wide[n]) if n in wide else str(v)
+                text = (wide_literal(v, wide[n]) if n in wide
+                        else vhdl_param(v))
                 lines.append(f'      {n} => {text}{comma}')
             lines.append('    )')
     lines.append('    port map (')
