@@ -593,6 +593,14 @@ _WIDTH_OPS = {
 }
 
 
+# max() and min() of two widths, which is how a block that takes two
+# operands sizes itself. They are the one place the two languages want
+# different text for one expression: VHDL-2008 has maximum() in
+# std.standard, and SystemVerilog has no such function for a constant
+# expression, so it gets the conditional that means the same thing.
+_WIDTH_CALLS = {'max': ('>', 'maximum'), 'min': ('<', 'minimum')}
+
+
 def _width_value (node, known):
     """The value of a width expression, without eval().
 
@@ -609,6 +617,11 @@ def _width_value (node, known):
         return known[node.id]
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return -_width_value(node.operand, known)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in _WIDTH_CALLS and len(node.args) >= 2
+            and not node.keywords):
+        values = [_width_value(a, known) for a in node.args]
+        return max(values) if node.func.id == 'max' else min(values)
     if isinstance(node, ast.BinOp) and type(node.op) in _WIDTH_OPS:
         left = _width_value(node.left, known)
         right = _width_value(node.right, known)
@@ -622,7 +635,7 @@ def _width_value (node, known):
     raise ValueError('not width arithmetic')
 
 
-def _width_text (node, outer = 0):
+def _width_text (node, outer = 0, lang = 'sv'):
     """The expression as the HDL spells it, parenthesised where the
     precedence needs it and nowhere else."""
     if isinstance(node, ast.Constant):
@@ -630,11 +643,23 @@ def _width_text (node, outer = 0):
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.UnaryOp):
-        return '-' + _width_text(node.operand, 3)
+        return '-' + _width_text(node.operand, 3, lang)
+    if isinstance(node, ast.Call):
+        compare, function = _WIDTH_CALLS[node.func.id]
+        parts = [_width_text(a, 0, lang) for a in node.args]
+        if lang == 'vhdl':
+            text = parts[0]
+            for part in parts[1:]:
+                text = f'{function}({text}, {part})'
+            return text
+        text = parts[0]
+        for part in parts[1:]:
+            text = f'({text} {compare} {part} ? {text} : {part})'
+        return text
     symbol, precedence = _WIDTH_OPS[type(node.op)]
-    text = (_width_text(node.left, precedence)
+    text = (_width_text(node.left, precedence, lang)
             + symbol
-            + _width_text(node.right, precedence + 1))
+            + _width_text(node.right, precedence + 1, lang))
     return f'({text})' if precedence < outer else text
 
 
@@ -674,7 +699,11 @@ def checked_expression (text, value, scope):
         return None
     known = {n: v for n, v in (scope or {}).items()
              if isinstance(v, int) and not isinstance(v, bool)}
-    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    # the name of a called function is an ast.Name too, and max is not
+    # a width the module declares
+    called = {id(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call)}
+    names = {n.id for n in ast.walk(tree)
+             if isinstance(n, ast.Name) and id(n) not in called}
     if not names or not names <= set(known):
         return None
     try:
@@ -685,7 +714,7 @@ def checked_expression (text, value, scope):
     return tree
 
 
-def constant_expression (text, value, scope):
+def constant_expression (text, value, scope, lang = 'sv'):
     """A localparam's own expression rather than the number it came to.
 
     `WIDTHH = WIDTH // 2` says why sixteen; `localparam WIDTHH = 16`
@@ -695,10 +724,10 @@ def constant_expression (text, value, scope):
     and never one after (PARAMETERS.md stage 1).
     """
     tree = checked_expression(text, value, scope)
-    return None if tree is None else _width_text(tree)
+    return None if tree is None else _width_text(tree, 0, lang)
 
 
-def width_expression (width_expr, width, scope):
+def width_expression (width_expr, width, scope, lang = 'sv'):
     """The top bit of a declared width, written as the author wrote it.
 
     `signal(WIDTH - 1)` should declare `[WIDTH-2:0]`, not the `[6:0]`
@@ -724,7 +753,7 @@ def width_expression (width_expr, width, scope):
     declared WIDTHD, and Verilator said so.
     """
     tree = checked_expression(width_expr, width, scope)
-    return None if tree is None else _width_text(_less_one(tree))
+    return None if tree is None else _width_text(_less_one(tree), 0, lang)
 
 
 def width_parameter (params, width, locals = None):

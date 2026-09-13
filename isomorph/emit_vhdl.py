@@ -361,7 +361,7 @@ def sl_bound (params, width, locals = None, width_expr = None,
     # what the author wrote first, then the width matched back to a
     # parameter by its value, then the number itself
     written = width_expression(width_expr, width,
-                               params if scope is None else scope)
+                               params if scope is None else scope, 'vhdl')
     if written is not None:
         return written
     name = width_parameter(params, width, locals)
@@ -799,7 +799,7 @@ def constant_lines (m):
                 f':= {wide_literal(value, w)};')
         else:
             text = constant_expression(m.constant_exprs.get(name),
-                                       value, scope)
+                                       value, scope, 'vhdl')
             lines.append(f'  constant {name} : integer := '
                          f'{text if text else value};')
         scope[name] = value
