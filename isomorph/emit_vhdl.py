@@ -600,6 +600,36 @@ def with_trailing (line, trailing):
     return line
 
 
+def generic_map (child, inst_params):
+    """The generics an instantiation names, and only those.
+
+    ir.Instance.params is the overrides, which is what SystemVerilog
+    emits, and the entity already carries every other value as the
+    default on its own generic. Restating the whole set here named
+    generics the entity does not declare: a block bakes a parameter
+    into its body during elaboration, so entity_lines declares only
+    the integers, and a string went into the generic map of every
+    design that instantiated a RAM wrapper as IMAGE => "" against
+    an entity with no IMAGE. ghdl rejected it, and nineteen of the
+    fpga tree's fifty-five designs would not analyse.
+
+    A blackbox is the other way round, and that is why the argument
+    is the child rather than a flag: isomorph writes no entity for
+    one, so the vendor's own generics are configured here and nowhere
+    else, and a string is how half of vendor IP is configured.
+    """
+    values = dict(inst_params)
+    if child is not None and child.blackbox:
+        values = dict(child.parameters)
+        values.update(inst_params)
+        return [(n, v) for n, v in values.items()
+                if isinstance(v, (int, str)) and not isinstance(v, bool)]
+    # a string on an ordinary block is elaboration-only: nothing in a
+    # body can read one, so there is nothing for a generic to carry
+    return [(n, v) for n, v in values.items()
+            if isinstance(v, int) and not isinstance(v, bool)]
+
+
 def entity_lines (m, wide = None):
     wide = wide or {}
     lines = [f'entity {m.name} is']
@@ -931,10 +961,7 @@ def generate_lines (ctx, head):
     lines.append(f'    inst : entity work.{head.module}')
     child = ctx.by_name.get(head.module)
     if child is not None:
-        values = dict(child.parameters)
-        values.update(head.params)
-        gens = [(n, v) for n, v in values.items()
-                if isinstance(v, (int, str)) and not isinstance(v, bool)]
+        gens = generic_map(child, head.params)
         wide = ctx.wide_all.get(head.module, {})
         if gens:
             lines.append('      generic map (')
@@ -974,10 +1001,7 @@ def instance_lines (ctx, inst):
     else:
         lines.append(f'  {inst.name} : entity work.{inst.module}')
     if child is not None:
-        values = dict(child.parameters)
-        values.update(inst.params)
-        gens = [(n, v) for n, v in values.items()
-                if isinstance(v, (int, str)) and not isinstance(v, bool)]
+        gens = generic_map(child, inst.params)
         wide = ctx.wide_all.get(inst.module, {})
         if gens:
             lines.append('    generic map (')
