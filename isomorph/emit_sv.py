@@ -80,15 +80,52 @@ def sv_number (value):
     return f"{width}'h{value & ((1 << width) - 1):0{width // 4}X}"
 
 
-def body_key (m):
+PARAM_DEFAULT_SV = re.compile(r'^(\s*parameter \w+) = .*$', re.M)
+# a generic's default, of any type. A constant reads `constant NAME :
+# type := value`, so the second word before the colon keeps this off
+# it: what a constant is set to is part of the body, not an override
+PARAM_DEFAULT_VHDL = re.compile(r'^(\s+\w+ : .*?) := .*$', re.M)
+
+
+def body_key (m, wide = None):
     """What the module is, with its name and parameter values taken out.
 
     Two builds of one block that agree on this are the same module. A
     parameter isomorph folded into the body - a width, a counter limit,
     a rate turned into a number of clocks - changes it and they differ.
     One that survived as a real parameter does not, and the difference
-    belongs at the instance."""
-    return repr(dataclasses.replace(m, name = '', parameters = {}))
+    belongs at the instance.
+
+    The comparison is the emitted text and not the IR, because that is
+    the question being asked. A width that follows a generic is the
+    same text at every width while the IR still holds the number it
+    elaborated with, so comparing the IR would never merge anything
+    that PARAMETERS.md stage 2 made mergeable.
+
+    Both languages have to agree. VHDL still folds the operand
+    widening inside arithmetic where SystemVerilog sizes the result
+    and lets the operands be self-determined, so a pair whose
+    SystemVerilog matches can still be two different entities.
+    Merging on the SystemVerilog alone would emit one entity that is
+    right at one width and wrong at the other, and would leave the
+    two languages with different module lists besides.
+    """
+    anonymous = dataclasses.replace(m, name = 'iso_body')
+    text = PARAM_DEFAULT_SV.sub(r'\1', emit_module(anonymous))
+    if not m.blackbox:
+        # by name, because the package rebinds emit_vhdl to the
+        # function of that name
+        from .emit_vhdl import emit_unit
+        # which generics have to be a vector is decided across every
+        # build of the block, not per build. Deciding it per build
+        # gave one of them an integer generic and the other a vector,
+        # so their texts never matched and they never merged - and
+        # after merging the surviving entity has to carry every value
+        # any of them holds anyway
+        unit = emit_unit(anonymous, {'iso_body': anonymous}, 'iso_body',
+                         {'iso_body': wide or {}})
+        text += '\n' + PARAM_DEFAULT_VHDL.sub(r'\1', unit)
+    return text
 
 
 def merge_builds (modules):
@@ -100,11 +137,18 @@ def merge_builds (modules):
     VERSION was two modules with two names for a body that is the same
     text either way; it is one module and one override now.
     """
+    from .emit_vhdl import wide_params
+    by_name = wide_params(modules)
+    wide = {}
+    for m in modules:
+        slot = wide.setdefault(m.block, {})
+        for name, width in by_name.get(m.name, {}).items():
+            slot[name] = max(slot.get(name, 0), width)
     first = {}
     keep = []
     rename = {}
     for m in modules:
-        key = (m.block, body_key(m))
+        key = (m.block, body_key(m, wide.get(m.block, {})))
         chosen = first.get(key)
         if chosen is None:
             first[key] = m
