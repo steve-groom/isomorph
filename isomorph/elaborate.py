@@ -35,6 +35,187 @@ def _name_part (value):
     return digest
 
 
+def _join_name (block_name, parts):
+    """A block name with the values that tell this build from another.
+
+    Single underscores: VHDL forbids consecutive ones, and SPEC 4.5
+    keeps the same identifier in SystemVerilog, VHDL and C99. Four
+    thirty-two bit constants spell out to seventy-three characters,
+    which puts a VHDL instantiation past the column the house style
+    keeps to and makes a file name nobody can read, so past the limit
+    the parts become a digest of themselves: still one module per
+    distinct build, and short.
+    """
+    if not parts:
+        return block_name
+    tail = '_'.join(f'{n}_{_name_part(v)}' for n, v in parts)
+    name = f'{block_name}_{tail}'
+    if len(name) <= NAME_LIMIT:
+        return name
+    digest = hashlib.sha1(tail.encode('utf-8')).hexdigest()[:8]
+    return f'{block_name}_p{digest}'
+
+
+def _kind_key (value):
+    """What a port's kind changes about the declared type, or None.
+
+    An enumeration or a struct is declared as its named type, so two
+    builds given different ones are two modules. Nothing else counts:
+    a one-bit port is `logic` and `std_logic` whether it was made by
+    signal() and called a bit or by open_port(), which builds its
+    stand-in as a vector. Splitting a module over that would give a
+    block two names because the parent did not use one of its
+    outputs.
+    """
+    if value.kind in ('enum', 'struct'):
+        return (value.kind, getattr(value.type, 'name', None))
+    return None
+
+
+def _shape_part (name, value):
+    """One port's contribution to a block's shape.
+
+    The widths a module would be built with, under the names the port
+    map uses, so two builds can be compared without emitting either."""
+    if isinstance(value, Signal):
+        return ((name, value.width, _kind_key(value)),)
+    if isinstance(value, SignalArray):
+        return ((name, value.width, ('array', len(value))),)
+    if isinstance(value, SimpleNamespace):
+        out = []
+        for member, element in vars(value).items():
+            if isinstance(element, Signal):
+                out += list(_shape_part(f'{name}_{member}', element))
+        return tuple(out)
+    if isinstance(value, (list, tuple)):
+        out = []
+        for index, element in enumerate(value):
+            out += list(_shape_part(f'{name}[{index}]', element))
+        return tuple(out)
+    return ((name, None, None),)
+
+
+def _separating (order, values):
+    """The fewest of these that tell every build apart, or None.
+
+    `values` maps a name to its value per build. One name is tried
+    before two, so a block built at two widths is called after the
+    width and not after everything that followed from it.
+    """
+    names = sorted(values)
+    for name in names:
+        if len({values[name][i] for i in range(len(order))}) == len(order):
+            return [name]
+    if len({tuple(values[n][i] for n in names)
+            for i in range(len(order))}) == len(order):
+        return names
+    return None
+
+
+def _tell_apart (block_name, shapes):
+    """One name per distinct module built from one block.
+
+    A block elaborated twice with different parameters or different
+    port widths is two modules in two files, and they cannot share a
+    name. The name is built from what the author wrote, and only as
+    much of it as it takes to tell the modules apart. Three rungs, in
+    the order a reader would look:
+
+    the parameters that differ from their defaults, because those are
+    written at the instantiation; then the block's own constants that
+    differ, which is where the house idiom puts the width when it
+    takes it from len(i_data) and there is no parameter at all; then
+    the ports themselves, which is all that is left for a block that
+    computes nothing and simply passes a bus through.
+
+    Nothing is invented. Every part of every name is a name the author
+    typed and a value the design really built, never an ordinal: the
+    cells_0 of SPEC 4.5 is what this exists to avoid.
+    """
+    order = list(shapes)
+    names = {s: shapes[s][0]._built_name for s in order}
+    if len(set(names.values())) == len(order):
+        return names
+
+    nodes = [shapes[s][0] for s in order]
+    base = [[(n, v) for n, v in node.parameters.items()
+             if _differs_from_default(node, n, v)] for node in nodes]
+
+    def build (extra):
+        out = {}
+        for index, shape in enumerate(order):
+            out[shape] = _join_name(block_name, base[index] + extra[index])
+        return out
+
+    # the block's own constants: WIDTH = len(i_data) and its kin
+    constants = {}
+    for name in set().union(*(set(node.constants) for node in nodes)):
+        column = [node.constants.get(name) for node in nodes]
+        if (len({repr(v) for v in column}) > 1
+                and all(isinstance(v, int) and not isinstance(v, bool)
+                        for v in column)):
+            constants[name] = column
+    chosen = _separating(order, constants)
+    if chosen:
+        picked = build([[(n, constants[n][i]) for n in chosen]
+                        for i in range(len(order))])
+        if len(set(picked.values())) == len(order):
+            return picked
+
+    # the ports, for a block that computes nothing of its own
+    ports = {}
+    columns = [dict((part[0], part[1]) for part in shape[2])
+               for shape in order]
+    for name in set().union(*(set(c) for c in columns)):
+        column = [c.get(name) for c in columns]
+        if len({repr(v) for v in column}) > 1:
+            ports[name] = column
+    chosen = _separating(order, ports)
+    if chosen:
+        picked = build([[(n, ports[n][i]) for n in chosen]
+                        for i in range(len(order))])
+        if len(set(picked.values())) == len(order):
+            return picked
+
+    raise IsomorphError(
+        f'{block_name} is built {len(order)} times and nothing tells '
+        'the builds apart: ' + _shape_difference(order)
+        + '. They are different modules and cannot share one name. '
+        'Give the block a parameter or a constant that differs '
+        'between them, so each module is named by something you '
+        'wrote. Nothing is invented here.')
+
+
+def _describe_port (part):
+    """One port, as the error message should read it."""
+    if part is None:
+        return 'absent'
+    width, kind = part
+    if kind is not None and kind[0] in ('enum', 'struct'):
+        return f'{kind[0]} {kind[1]}'
+    if kind is not None and kind[0] == 'array':
+        return f'an array of {kind[1]} by {width} bits'
+    return f'{width} bits'
+
+
+def _shape_difference (order):
+    """The ports that are not the same in every build."""
+    out = []
+    first = dict((part[0], part[1:]) for part in order[0][2])
+    for shape in order[1:]:
+        for name, *rest in shape[2]:
+            if first.get(name) != tuple(rest):
+                out.append(f'{name} is {_describe_port(first.get(name))} '
+                           f'in one and {_describe_port(tuple(rest))} in '
+                           'another')
+    return ', '.join(sorted(set(out))) or 'the ports differ'
+
+
+def _differs_from_default (node, name, value):
+    default = inspect.signature(node.func).parameters[name].default
+    return default is not value and default != value
+
+
 class Elaborated:
     """One elaborated block: the result of calling a @block function."""
 
@@ -220,26 +401,33 @@ class Elaborated:
     def _built_name (self):
         """Block name, suffixed by structural parameters that differ from
         the defaults (4.1)."""
-        defaults = {name: p.default for name, p in
-                    inspect.signature(self.func).parameters.items()}
-        suffix = [f'{n}_{_name_part(v)}' for n, v in
-                  self.parameters.items()
-                  if defaults.get(n) is not v and defaults.get(n) != v]
-        # Single underscore: VHDL forbids consecutive underscores, and
-        # SPEC 4.5 keeps the same identifier in SV, VHDL and C99.
-        if not suffix:
-            return self.block_name
-        tail = '_'.join(suffix)
-        name = f'{self.block_name}_{tail}'
-        if len(name) <= NAME_LIMIT:
-            return name
-        # four thirty-two bit constants spell out to seventy-three
-        # characters, which puts a VHDL instantiation past the column
-        # the house style keeps to and makes a file name nobody can
-        # read anyway. Past the limit the parameters become a digest of
-        # themselves: still one module per distinct set, and short
-        digest = hashlib.sha1(tail.encode('utf-8')).hexdigest()[:8]
-        return f'{self.block_name}_p{digest}'
+        return _join_name(self.block_name,
+                          [(n, v) for n, v in self.parameters.items()
+                           if _differs_from_default(self, n, v)])
+
+    @property
+    def shape (self):
+        """What makes this build a different module from another build
+        of the same block.
+
+        Its parameters and the widths of its ports. A block is an
+        ordinary function of those two things, so two builds that
+        agree on them elaborate to the same body and are one module;
+        two that do not are two modules, in two files, whether or not
+        a parameter says so.
+
+        The port half is why this is not just the parameters. The
+        house idiom takes a width from the port - a multiply step opens
+        with WIDTH = max(len(i_data_a), len(i_data_b)) - so a block
+        can be built at two sizes with no parameter anywhere, and
+        keying the hierarchy on the name alone dropped the second
+        one and wired its instance to the first one's module.
+        """
+        params = tuple(sorted((n, repr(v))
+                              for n, v in self.parameters.items()))
+        ports = tuple(part for name, value in self.ports.items()
+                      for part in _shape_part(name, value))
+        return (self.block_name, params, ports)
 
     def walk (self):
         """Every distinct elaborated block below and including this one,
@@ -249,7 +437,7 @@ class Elaborated:
         def visit (node):
             for child in node.instances.values():
                 visit(child)
-            seen.setdefault(node.module_name, node)
+            seen.setdefault(node.shape, node)
         visit(self)
         return list(seen.values())
 
@@ -278,14 +466,17 @@ class Elaborated:
             for child in node.instances.values():
                 visit(child)
             by_block.setdefault(node.block_name, {}) \
-                    .setdefault(node._built_name, []).append(node)
+                    .setdefault(node.shape, []).append(node)
         visit(self)
-        for block, builds in by_block.items():
-            if len(builds) != 1:
+        for block, shapes in by_block.items():
+            if len(shapes) == 1:
+                for nodes in shapes.values():
+                    for node in nodes:
+                        node._name_override = block
                 continue
-            for nodes in builds.values():
-                for node in nodes:
-                    node._name_override = block
+            for shape, name in _tell_apart(block, shapes).items():
+                for node in shapes[shape]:
+                    node._name_override = name
 
 
 def element_index (children, element):

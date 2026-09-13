@@ -99,6 +99,7 @@ class Blackbox:
         self.instance_name = None
         self.instances = {}
         self.parameters = dict(kind.params)
+        self.constants = {}
         self.open_ports = set()
         self.array_name = None
         self.array_index = 0
@@ -152,6 +153,13 @@ class Blackbox:
     @property
     def module_name (self):
         return self.kind.module
+
+    @property
+    def shape (self):
+        """Every instance of one blackbox is the same stub. The
+        vendor's part has one port list and isomorph never sees
+        inside it, so there is nothing that could make two."""
+        return (self.kind.module, (), ())
 
     @property
     def _built_name (self):
