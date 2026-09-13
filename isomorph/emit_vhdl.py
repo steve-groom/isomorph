@@ -18,7 +18,7 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError
-from .emit_sv import merge_builds, retarget
+from .emit_sv import merge_builds, retarget, width_expression
 from . import reserved
 
 
@@ -355,20 +355,29 @@ def width_parameter (params, width, locals = None):
     return found[0]
 
 
-def sl_bound (params, width, locals = None):
+def sl_bound (params, width, locals = None, width_expr = None,
+              scope = None):
+    # what the author wrote first, then the width matched back to a
+    # parameter by its value, then the number itself
+    written = width_expression(width_expr, width,
+                               params if scope is None else scope)
+    if written is not None:
+        return written
     name = width_parameter(params, width, locals)
     return f'{name} - 1' if name else str(width - 1)
 
 
 def sl_type (width, kind = 'vector', typ = None, params = None,
-             locals = None):
+             locals = None, width_expr = None, scope = None):
     if kind == 'enum' and typ is not None:
         return typ.name
     if kind == 'struct' and typ is not None:
         return typ.name
     if width == 1:
         return 'std_logic'
-    return f'std_logic_vector({sl_bound(params, width, locals)} downto 0)'
+    return ('std_logic_vector('
+            + sl_bound(params, width, locals, width_expr, scope)
+            + ' downto 0)')
 
 
 
@@ -645,8 +654,10 @@ def port_lines (m):
         if p.array:
             types.append(array_type_name(p.name, p.width, p.array))
         else:
+            # a port list is above the constants and may not name one
             types.append(sl_type(p.width, p.kind, p.type, m.parameters,
-                                 m.constants))
+                                 m.constants, p.width_expr,
+                                 m.parameters))
     wn = max(len(n) for n in names)
     wd = max(len(d) for d in dirs)
     out = []
@@ -772,7 +783,8 @@ def signal_lines (m):
             typ = array_type_name(s.name, s.width, s.array)
         else:
             typ = sl_type(s.width, s.kind, s.type, m.parameters,
-                          m.constants)
+                          m.constants, s.width_expr,
+                          {**m.parameters, **m.constants})
         tail = array_init_vhdl(s) if s.array and s.init else ''
         lines += trailing_lines(f'  signal {s.name} : {typ}{tail};',
                                 s.trailing, 2)

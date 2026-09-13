@@ -100,6 +100,9 @@ class Sig:
     line: int = 0
     comments: list = field(default_factory = list)
     trailing: str = None
+    # how the width was written, when it was an expression over the
+    # module's parameters rather than a number (SPEC 3.6, 4.1)
+    width_expr: str = None
 
 
 @dataclass
@@ -114,6 +117,7 @@ class Port:
     trailing: str = None
     attributes: dict = field(default_factory = dict)
     period_ns: float = None    # declared by clock(), for the .sdc
+    width_expr: str = None     # the expression the width was written as
 
 
 @dataclass

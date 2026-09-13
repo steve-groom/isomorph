@@ -180,11 +180,14 @@ class Analyser:
                     attrs.setdefault('fsm_encoding', spelt)
                     attrs.setdefault('syn_encoding', spelt)
             signals.append(ir.Sig(name, s.width, s.kind, None,
-                                  s.type, attrs, 0, s.line))
+                                  s.type, attrs, 0, s.line,
+                                  width_expr = s.width_expr))
         for name, a in e.arrays.items():
             signals.append(ir.Sig(name, a.width, 'vector', a.init,
                                   None, dict(a.attributes), len(a),
-                                  a.line))
+                                  a.line,
+                                  width_expr = getattr(a, 'width_expr',
+                                                       None)))
         signals.sort(key = lambda s: s.line)
         previous = e.func.__code__.co_firstlineno
         by_name = {}
@@ -520,7 +523,8 @@ class Analyser:
             out.append(ir.Port(pname, value.width, direction, value.kind,
                                value.type, 0, [], None,
                                dict(value.attributes),
-                               getattr(value, 'clock_period_ns', None)))
+                               getattr(value, 'clock_period_ns', None),
+                               value.width_expr))
         elif isinstance(value, SignalArray):
             pname = self.name_of(value)
             # an instance drives a whole array under its own name and
@@ -533,7 +537,9 @@ class Analyser:
                              for s in value))
             direction = 'out' if driven else 'in'
             out.append(ir.Port(pname, value.width, direction, 'vector', None,
-                               len(value)))
+                               len(value),
+                               width_expr = getattr(value, 'width_expr',
+                                                    None)))
         elif isinstance(value, SimpleNamespace):
             for member, element in vars(value).items():
                 if isinstance(element, Signal):

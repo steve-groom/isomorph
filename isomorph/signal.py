@@ -4,6 +4,8 @@ Nothing here simulates. A Signal knows its width, kind and name; the
 process decorators record a Python function for the analyser to read as
 an AST; assign() records an expression the same way. Section 3 of
 SPEC.txt is the reference."""
+import ast
+import dis
 import sys
 from types import SimpleNamespace
 
@@ -12,13 +14,93 @@ class IsomorphError(Exception):
     pass
 
 
-def _caller_line ():
-    # The source line of the declaration that created an object, for
-    # comments and declaration order: the first frame outside this file.
+def _caller_frame ():
+    # The first frame outside this file: whoever wrote the declaration.
     frame = sys._getframe(1)
     while frame is not None and frame.f_code.co_filename == __file__:
         frame = frame.f_back
+    return frame
+
+
+def _caller_line ():
+    # The source line of the declaration that created an object, for
+    # comments and declaration order: the first frame outside this file.
+    frame = _caller_frame()
     return frame.f_lineno if frame is not None else 0
+
+
+_sources = {}
+
+
+def _source_of (path):
+    """The text and AST of a file that called us, parsed once."""
+    if path not in _sources:
+        try:
+            with open(path, encoding = 'utf-8') as handle:
+                text = handle.read()
+            _sources[path] = (text, ast.parse(text))
+        except (OSError, SyntaxError, ValueError):
+            _sources[path] = (None, None)
+    return _sources[path]
+
+
+def _call_node (frame):
+    """The ast.Call for the call being executed in `frame`.
+
+    Python 3.11 carries a column range per instruction, so the call
+    site is found exactly rather than by looking for the only call on
+    the line. Two signal() calls on one line are told apart.
+    """
+    text, tree = _source_of(frame.f_code.co_filename)
+    if tree is None:
+        return None, None
+    position = None
+    for instruction in dis.get_instructions(frame.f_code):
+        if instruction.offset == frame.f_lasti:
+            position = instruction.positions
+            break
+    if position is None or position.lineno is None:
+        return None, None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and node.lineno == position.lineno
+                and node.col_offset == position.col_offset):
+            return node, text
+    return None, None
+
+
+def _written_as (index = 0, keyword = None):
+    """The source text of one argument of the call being elaborated.
+
+    A width written as an expression over the block's parameters is
+    kept as that expression, so signal(WIDTH - 1) can reach the HDL as
+    [WIDTH-2:0] rather than as the [6:0] one elaboration happened to
+    produce. SPEC 3.6 already says a slice bound is emitted as written;
+    this is the same rule for a declaration.
+
+    None when there is nothing worth carrying: no source to read, or a
+    plain number, which says no more than the width already does.
+    """
+    frame = _caller_frame()
+    if frame is None:
+        return None
+    node, text = _call_node(frame)
+    if node is None:
+        return None
+    argument = None
+    if index < len(node.args) and not isinstance(node.args[index],
+                                                 ast.Starred):
+        argument = node.args[index]
+    if argument is None and keyword is not None:
+        for item in node.keywords:
+            if item.arg == keyword:
+                argument = item.value
+    if argument is None or isinstance(argument, ast.Constant):
+        return None
+    written = ast.get_source_segment(text, argument)
+    if written is None:
+        return None
+    return ' '.join(written.split())
 
 
 class Edge:
@@ -124,6 +206,10 @@ class Signal:
     because the width rules already make you say where a carry goes:
     (count + 1)[7:0] is the only way to write it."""
 
+    # how the width was written, when that was an expression over the
+    # block's parameters rather than a number (ROADMAP item 9)
+    width_expr = None
+
     def __init__ (self, width = 1, kind = 'vector', type = None):
         self.width = width
         self.kind = kind                # 'bit', 'vector', 'enum', 'struct'
@@ -156,7 +242,9 @@ def signal (width = 1):
     if not isinstance(width, int) or width < 1:
         raise IsomorphError('signal width must be a positive int, '
                             f'not {width!r}')
-    return Signal(width, 'bit' if width == 1 else 'vector')
+    made = Signal(width, 'bit' if width == 1 else 'vector')
+    made.width_expr = _written_as(0, 'width')
+    return made
 
 
 class SignalArray(list):
@@ -261,6 +349,10 @@ def preload (array, values):
 
 def signals (count, width = 1, style = None):
     array = SignalArray(count, width)
+    written = _written_as(1, 'width')
+    array.width_expr = written
+    for element in array:
+        element.width_expr = written
     if style:
         array.attributes['ram_style'] = style
     return array

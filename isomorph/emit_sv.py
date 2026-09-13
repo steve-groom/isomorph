@@ -3,6 +3,7 @@
 The output keeps the input's structure: one module per IR module (leaves
 first), named processes, named functions, named instances, comments on
 the same items. Section 4 of SPEC.txt is the reference."""
+import ast
 import re
 import textwrap
 import dataclasses
@@ -579,6 +580,124 @@ def trailing_lines (line, trailing, indent):
     return comment_lines([trailing], indent) + [line]
 
 
+# the arithmetic a declared width may be written in, and what each
+# operator is called in both emitted languages. Python's // is integer
+# division and is spelt / in SystemVerilog and VHDL, where // would be
+# the start of a comment
+_WIDTH_OPS = {
+    ast.Add: ('+', 1), ast.Sub: ('-', 1),
+    ast.Mult: ('*', 2), ast.FloorDiv: ('/', 2), ast.Div: ('/', 2),
+}
+
+
+def _width_value (node, known):
+    """The value of a width expression, without eval().
+
+    Only names the module declares and the four arithmetic operators
+    are allowed, so there is nothing here that could run anything.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, int):
+            raise ValueError('not an integer')
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id not in known:
+            raise ValueError('not a parameter')
+        return known[node.id]
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return -_width_value(node.operand, known)
+    if isinstance(node, ast.BinOp) and type(node.op) in _WIDTH_OPS:
+        left = _width_value(node.left, known)
+        right = _width_value(node.right, known)
+        if type(node.op) in (ast.FloorDiv, ast.Div):
+            if right == 0:
+                raise ValueError('division by zero')
+            return left // right
+        return {ast.Add: lambda a, b: a + b,
+                ast.Sub: lambda a, b: a - b,
+                ast.Mult: lambda a, b: a * b}[type(node.op)](left, right)
+    raise ValueError('not width arithmetic')
+
+
+def _width_text (node, outer = 0):
+    """The expression as the HDL spells it, parenthesised where the
+    precedence needs it and nowhere else."""
+    if isinstance(node, ast.Constant):
+        return str(node.value)
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.UnaryOp):
+        return '-' + _width_text(node.operand, 3)
+    symbol, precedence = _WIDTH_OPS[type(node.op)]
+    text = (_width_text(node.left, precedence)
+            + symbol
+            + _width_text(node.right, precedence + 1))
+    return f'({text})' if precedence < outer else text
+
+
+def _less_one (node):
+    """One less than the expression, folded into it where it can be.
+
+    signal(WIDTH - 1) declares bits WIDTH-2 down to 0, and writing
+    that as WIDTH-1-1 would be arithmetic the author did not write."""
+    if isinstance(node, ast.Constant):
+        return ast.Constant(node.value - 1)
+    if isinstance(node, ast.BinOp) and isinstance(node.right, ast.Constant):
+        if isinstance(node.op, ast.Add):
+            if node.right.value == 1:
+                return node.left
+            return ast.BinOp(node.left, ast.Add(),
+                             ast.Constant(node.right.value - 1))
+        if isinstance(node.op, ast.Sub):
+            return ast.BinOp(node.left, ast.Sub(),
+                             ast.Constant(node.right.value + 1))
+    return ast.BinOp(node, ast.Sub(), ast.Constant(1))
+
+
+def width_expression (width_expr, width, scope):
+    """The top bit of a declared width, written as the author wrote it.
+
+    `signal(WIDTH - 1)` should declare `[WIDTH-2:0]`, not the `[6:0]`
+    that one elaboration happened to produce. SPEC 3.6 already says a
+    slice bound is emitted as written; this is the same rule for a
+    declaration, and it is what lets one module serve every width
+    rather than a file per size.
+
+    The expression is only used when it is provably the one that built
+    this signal: every name in it is a parameter or constant of this
+    module, and working it out with their values gives the width the
+    design really has. Anything else - a name from the elaborate
+    function that the module never declared, a width that came out
+    some other way - falls back to the literal. A declaration that
+    said something the design does not do would be worse than an
+    unreadable one.
+
+    `scope` is what may be named where the declaration goes, and it is
+    not the same in both places. A signal is declared under the
+    localparams and may use them; a port list is above them and may
+    only use the parameters, which is why a port width naming a
+    localparam went out as [WIDTHD-1:0] against a module that never
+    declared WIDTHD, and Verilator said so.
+    """
+    if not width_expr:
+        return None
+    try:
+        tree = ast.parse(width_expr, mode = 'eval').body
+    except (SyntaxError, ValueError):
+        return None
+    known = {n: v for n, v in (scope or {}).items()
+             if isinstance(v, int) and not isinstance(v, bool)}
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    if not names or not names <= set(known):
+        return None
+    try:
+        if _width_value(tree, known) != width:
+            return None
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return _width_text(_less_one(tree))
+
+
 def width_parameter (params, width, locals = None):
     """The name of the parameter this width came from, or None.
 
@@ -621,14 +740,19 @@ def param_hi (params, width, locals = None):
 
 
 def packed_type (width, kind = 'vector', typ = None, params = None,
-                 locals = None):
+                 locals = None, width_expr = None, scope = None):
     if kind == 'enum' and typ is not None:
         return typ.name
     if kind == 'struct' and typ is not None:
         return typ.name
     if width == 1:
         return 'logic'
-    hi = param_hi(params, width, locals)
+    # what the author wrote first, then the width matched back to a
+    # parameter by its value, then the number itself
+    hi = width_expression(width_expr, width,
+                          params if scope is None else scope)
+    if hi is None:
+        hi = param_hi(params, width, locals)
     if hi is None:
         hi = str(width - 1)
     return f'logic [{hi}:0]'
@@ -664,8 +788,9 @@ def struct_typedefs (modules):
 def port_lines (m):
     ports = m.ports
     dirs = ['input ' if p.direction == 'in' else 'output' for p in ports]
+    # a port list is above the localparams and may not name one
     types = [packed_type(p.width, p.kind, p.type, m.parameters,
-                         m.constants)
+                         m.constants, p.width_expr, m.parameters)
              for p in ports]
     names = [f'{p.name} [{p.array}]' if p.array else p.name for p in ports]
     wd = max(len(d) for d in dirs)
@@ -807,7 +932,8 @@ def signal_lines (m):
     for s in m.signals:
         lines += comment_lines(s.comments, 4)
         packed = packed_type(s.width, s.kind, s.type, m.parameters,
-                             m.constants)
+                             m.constants, s.width_expr,
+                             {**m.parameters, **m.constants})
         name = s.name
         if s.array:
             name = f'{name} [{s.array}]'
