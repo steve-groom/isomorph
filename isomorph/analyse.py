@@ -176,8 +176,9 @@ class Analyser:
             if s.kind == 'enum' and s.type is not None:
                 enc = getattr(s.type, 'encoding', 'auto')
                 if enc and enc != 'auto':
-                    attrs.setdefault('fsm_encoding', enc)
-                    attrs.setdefault('syn_encoding', enc)
+                    spelt = VENDOR_ENCODING.get(enc, enc)
+                    attrs.setdefault('fsm_encoding', spelt)
+                    attrs.setdefault('syn_encoding', spelt)
             signals.append(ir.Sig(name, s.width, s.kind, None,
                                   s.type, attrs, 0, s.line))
         for name, a in e.arrays.items():
@@ -2076,6 +2077,25 @@ def fatal_warnings (warnings):
         if any(mark in body for mark in FATAL_SEVERE):
             out.append(w)
     return out
+
+
+# What the fitters call the encodings, which is not what SPEC 5.4
+# calls them. Measured on Quartus Prime 25.1std and Efinity 2026.1,
+# 2026-09-13, on a three-state machine:
+#
+#   one_hot   rejected by both. "Invalid value" from Quartus, "unknown
+#             fsm encoding ignored" from Efinity, and the machine came
+#             out binary on Efinity
+#   one-hot   Quartus takes it, Efinity does not
+#   onehot    both take it, and Efinity really does build it one-hot:
+#             three flops for three states rather than two
+#
+# sequential, gray and johnson are spelt the same everywhere. The
+# Python spelling stays one_hot, because that is a Python name; only
+# what reaches the HDL changes. AMD Vivado documents one_hot with the
+# underscore and is not installed here, so it is untested and is
+# ROADMAP item 16.
+VENDOR_ENCODING = {'one_hot': 'onehot'}
 
 
 def blackbox_module (node):
