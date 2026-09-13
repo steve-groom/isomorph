@@ -212,6 +212,7 @@ class Analyser:
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
         mod.constant_exprs = constant_expressions(e.func, e.constants)
+        promote_port_widths(mod)
         self.check_names(mod)
         self.check_instance_arrays(mod)
         self.check_unused(mod)
@@ -2151,6 +2152,79 @@ def constant_expressions (func, names):
         if text:
             out[name] = ' '.join(text.split())
     return out
+
+
+def port_width_name (text):
+    """The port whose width this constant names, or None.
+
+    Exactly `len(port)` or `len(bundle.member)`. Anything else names
+    no single port: `max(len(i_data_a), len(i_data_b))` is a width
+    derived from two of them and gives neither a name, and a generic
+    isomorph named for itself would be the cells_0 of SPEC 4.5 in a
+    different hat. A block that wants to be reusable says so by
+    naming its widths.
+    """
+    try:
+        node = ast.parse(text, mode = 'eval').body
+    except (SyntaxError, ValueError):
+        return None
+    if not (isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name) and node.func.id == 'len'
+            and len(node.args) == 1 and not node.keywords):
+        return None
+    arg = node.args[0]
+    if isinstance(arg, ast.Name):
+        return arg.id
+    if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
+        return f'{arg.value.id}_{arg.attr}'
+    return None
+
+
+def promote_port_widths (mod):
+    """A constant that names a port's width becomes a generic.
+
+    `WIDTHD = len(i_data)` is not just a constant. It is the author
+    giving that port's width a name, and a name is the one thing the
+    converter cannot invent for itself, so this is the whole hinge of
+    PARAMETERS.md stage 2. The port then declares [WIDTHD-1:0], one
+    module serves every width, and a VHDL team can be handed the file
+    rather than a regenerated blob per size.
+
+    The value has to be the width the port really has, or the name is
+    not naming what it looks like it names and the number goes out
+    instead. An array port is left alone: its element type carries the
+    width in VHDL and that is PARAMETERS.md stage 4.
+    """
+    by_name = {}
+    for port in mod.ports:
+        by_name.setdefault(port.name, port)
+    promoted = []
+    for name, text in list(mod.constant_exprs.items()):
+        wanted = port_width_name(text)
+        if wanted is None:
+            continue
+        port = by_name.get(wanted)
+        value = mod.constants.get(name)
+        if port is None or port.array or value is None:
+            continue
+        if value != port.width:
+            continue
+        promoted.append(name)
+        port.width_expr = name
+    if not promoted:
+        return
+    # every other port of the same width that this one names follows,
+    # because two ports of one width are one generic and saying it
+    # twice would let a build override half of itself
+    for name in promoted:
+        value = mod.constants[name]
+        for port in mod.ports:
+            if (not port.array and port.width == value
+                    and not port.width_expr):
+                port.width_expr = name
+    for name in promoted:
+        mod.parameters[name] = mod.constants.pop(name)
+        mod.constant_exprs.pop(name, None)
 
 
 def blackbox_module (node):
