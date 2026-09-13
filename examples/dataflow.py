@@ -10,7 +10,7 @@ bench runs on all three simulators and lints in both languages.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main)
-from isomorph.ifaces import stream, ram_read, ram_write
+from isomorph.lib import stream, ram_read, ram_write
 from isomorph.lib import (ram_block, stream_to_memory, stream_from_memory,
     stream_pipe, stream_fifo, pipeline)
 

@@ -10,7 +10,7 @@ semantics say and what the M9K and the like do in their default mode.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main, IsomorphError)
-from isomorph.ifaces import ram_read, ram_write
+from isomorph.lib.ports import ram_read, ram_write
 
 
 @block

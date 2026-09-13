@@ -1,16 +1,30 @@
-"""External memory device pins: SDRAM and HyperRAM. Timing numbers
-ride along on the bundle as plain attributes for the controller."""
+"""
+External memory device pins: SDR SDRAM and HyperRAM.
+
+The pins are the interface and are what every part of each kind has.
+The timing numbers ride along on the bundle as plain attributes, so a
+controller reads them off the port it was given rather than taking
+them as parameters of its own.
+
+**Those numbers are placeholders.** They are there so a controller
+elaborates and simulates without being handed fourteen arguments, and
+they are chosen to make it do something interesting rather than to
+describe any device. They are not a datasheet. A design that is going
+to meet a real part passes that part's numbers, and the ones it does
+not pass are still whatever is written here.
+"""
 from types import SimpleNamespace
 
 from ..signal import signal
 
 
-def device_sdram (DATA_WIDTH = 16, ROW_WIDTH = 12, COL_WIDTH = 9,
+def sdram (DATA_WIDTH = 16, ROW_WIDTH = 12, COL_WIDTH = 9,
                   BANK_WIDTH = 2, CAS_LATENCY = 3, REFRESH_ms = 64,
                   tMRD_cycles = 4, tRFC_ns = 60, tRCD_ns = 18, tRP_ns = 18,
                   tWR_ns = 15, tRAS_ns = 42, tRC_ns = 60, tRRD_ns = 12):
     """SDR SDRAM pins with split dq (o, oe, i). Control lines reset
-    inactive high."""
+    inactive high. Every timing above is a placeholder; pass the
+    part's own."""
     return SimpleNamespace(
         DATA_WIDTH = DATA_WIDTH,
         ROW_WIDTH = ROW_WIDTH,
@@ -44,7 +58,8 @@ def device_sdram (DATA_WIDTH = 16, ROW_WIDTH = 12, COL_WIDTH = 9,
 
 def hyperram (WIDTH = 16, tACC_ns = 35, tVCS_us = 150, LATENCY_CLOCKS = 7,
               tRWR_ns = 35):
-    """HyperRAM pins with split dq and rwds (o, oe, i)."""
+    """HyperRAM pins with split dq and rwds (o, oe, i). Every timing
+    above is a placeholder; pass the part's own."""
     return SimpleNamespace(
         tACC_ns = tACC_ns,
         tVCS_us = tVCS_us,

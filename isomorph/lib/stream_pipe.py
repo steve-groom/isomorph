@@ -9,7 +9,7 @@ is stream_fifo with DEPTH = 2, which is the skid buffer.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main)
-from isomorph.ifaces import stream
+from isomorph.lib.ports import stream
 
 
 @block

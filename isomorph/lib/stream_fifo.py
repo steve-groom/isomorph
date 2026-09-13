@@ -11,7 +11,7 @@ FIFO with the registered read a block RAM wants is a later block.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main, IsomorphError)
-from isomorph.ifaces import stream
+from isomorph.lib.ports import stream
 
 
 @block

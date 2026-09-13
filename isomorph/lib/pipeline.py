@@ -23,7 +23,7 @@ import inspect
 import sys
 from types import SimpleNamespace
 
-from ..ifaces import stream
+from isomorph.lib.ports import stream
 from ..signal import IsomorphError
 
 

@@ -9,7 +9,7 @@ and i_count of zero runs until the counter wraps, so give it a count.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main)
-from isomorph.ifaces import stream, ram_write
+from isomorph.lib.ports import stream, ram_write
 
 
 @block

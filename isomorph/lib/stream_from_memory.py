@@ -17,7 +17,7 @@ always room, which the assert says.
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,
     struct, attr, open_port, instances, main)
-from isomorph.ifaces import stream, ram_read
+from isomorph.lib.ports import stream, ram_read
 from isomorph.lib.stream_fifo import stream_fifo
 
 
