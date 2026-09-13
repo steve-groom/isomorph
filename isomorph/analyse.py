@@ -221,7 +221,7 @@ class Analyser:
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
         mod.constant_exprs = constant_expressions(e.func, e.constants)
-        promote_port_widths(mod)
+        self.warnings += promote_port_widths(mod)
         self.check_names(mod)
         self.check_instance_arrays(mod)
         self.check_unused(mod)
@@ -2211,6 +2211,36 @@ def port_width_name (text):
     return None
 
 
+def ports_measured (text, known):
+    """The ports this expression calls len() on, whatever else it does.
+
+    Evidence that the author meant the block to size itself from its
+    ports, which is what makes a missed promotion worth saying out
+    loud rather than leaving as a module quietly frozen at one width.
+    """
+    try:
+        tree = ast.parse(text, mode = 'eval').body
+    except (SyntaxError, ValueError):
+        return set()
+    found = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'len' and len(node.args) == 1):
+            continue
+        arg = node.args[0]
+        if isinstance(arg, ast.Name):
+            name = arg.id
+        elif (isinstance(arg, ast.Attribute)
+                and isinstance(arg.value, ast.Name)):
+            name = f'{arg.value.id}_{arg.attr}'
+        else:
+            continue
+        if name in known:
+            found.add(name)
+    return found
+
+
 def promote_port_widths (mod):
     """A constant that names a port's width becomes a generic.
 
@@ -2229,10 +2259,24 @@ def promote_port_widths (mod):
     by_name = {}
     for port in mod.ports:
         by_name.setdefault(port.name, port)
+    warnings = []
     promoted = []
     for name, text in list(mod.constant_exprs.items()):
         wanted = port_width_name(text)
         if wanted is None:
+            measured = ports_measured(text, by_name)
+            if measured:
+                listed = ', '.join(sorted(measured))
+                first = sorted(measured)[0]
+                warnings.append(
+                    f'{name} is measured from {listed} but names no one '
+                    f"port's width, so every port stays the width it "
+                    'was built with and this module cannot be used at '
+                    'another size. Give each width a constant of its '
+                    f'own, one that is exactly len({first}), and each '
+                    'becomes a generic that the ports and everything '
+                    'derived from them follow. An output needs one too, '
+                    'or it stays fixed while the inputs move.')
             continue
         port = by_name.get(wanted)
         value = mod.constants.get(name)
@@ -2243,7 +2287,7 @@ def promote_port_widths (mod):
         promoted.append(name)
         port.width_expr = name
     if not promoted:
-        return
+        return warnings
     # every other port of the same width that this one names follows,
     # because two ports of one width are one generic and saying it
     # twice would let a build override half of itself
@@ -2256,6 +2300,7 @@ def promote_port_widths (mod):
     for name in promoted:
         mod.parameters[name] = mod.constants.pop(name)
         mod.constant_exprs.pop(name, None)
+    return warnings
 
 
 def blackbox_module (node):
