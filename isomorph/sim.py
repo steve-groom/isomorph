@@ -11,12 +11,42 @@ from .elaborate import Elaborated
 from .emit_c99 import (ff_driven_names, module_clocks, clock_id,
                        hierarchy_clocks, write_c99, alias_source)
 from .execute import Executor, SimError, split_index
-from .signal import IsomorphError, Signal
+from .signal import EnumMember, IsomorphError, Signal
 from .vcd import VcdWriter
 
 
 RUNTIME_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            'runtime')
+
+
+def _returning (value):
+    if False:
+        yield
+    return value
+
+
+class Cycles(int):
+    """How many clocks something took.
+
+    An int, and awaitable, so `n = sim.until(...)` and
+    `n = await sim.until(...)` are the same bench written two ways.
+    There is no scheduler under the await: the work is done by the
+    time it returns, and the await only reads better.
+    """
+
+    def __await__ (self):
+        return _returning(int(self))
+
+
+class _Monitor:
+    """A plain function at the sample point (ROADMAP 10)."""
+
+    def __init__ (self, fn):
+        self.fn = fn
+
+    def sample (self, sim, when):
+        if when == 'edge':
+            self.fn(sim)
 
 
 class Simulator:
@@ -67,6 +97,8 @@ class Simulator:
         self._native = None
         self._checks = []
         self._proto_events = []
+        self._enum_of = {}
+        self._enum_paths(self.top, '')
         if backend == 'python':
             self._python = Executor(self.modules)
         elif backend == 'c99':
@@ -78,6 +110,15 @@ class Simulator:
         else:
             raise SimError(f"unknown simulator backend {backend!r}; "
                            "use 'python', 'c99' or 'verilator'")
+
+    def _enum_paths (self, module, prefix):
+        for s in list(module.signals) + list(module.ports):
+            if s.kind == 'enum' and s.type is not None:
+                self._enum_of[prefix + s.name] = s.type
+        for inst in module.instances:
+            child = self.by_name.get(inst.module)
+            if child is not None and child is not module:
+                self._enum_paths(child, prefix + inst.name + '.')
 
     def add_clock (self, period, clock = None):
         ns = max(1, int(round(float(period) / 1e-9)))
@@ -97,7 +138,7 @@ class Simulator:
             return self.clocks[clock]
         return self.period_ns
 
-    def set (self, key, value):
+    def set (self, key, value, settle = True):
         name = self._name(key)
         if name in self.clocks or name == self.clock_name:
             raise SimError(
@@ -106,20 +147,39 @@ class Simulator:
                 'posedge() or run(). Driving it by hand makes the three '
                 'backends disagree, because Verilator sees a pin move '
                 'and the other two do not.')
+        if isinstance(value, EnumMember):
+            value = value.value
         if self._python is not None:
             self._python.set(name, value)
         else:
             self._native.set(name, value)
+        # forgetting eval() is a stale read, which is the worst kind of
+        # bug a bench can have. settle = False drives several inputs
+        # before letting any of them take effect
+        if settle:
+            self.eval()
 
     def get (self, key):
         name = self._name(key)
         if self._python is not None:
-            return self._python.get(name)
-        return self._native.get(name)
+            value = self._python.get(name)
+        else:
+            value = self._native.get(name)
+        kind = self._enum_of.get(name)
+        if kind is not None:
+            for member in kind.members:
+                if member.value == value:
+                    return member
+        return value
 
     def add_check (self, check):
         """Protocol monitor. Sampled after comb settle, before the edge."""
         self._checks.append(check)
+
+    def add_monitor (self, fn):
+        """fn(sim) at the same point a check is sampled."""
+        self._checks.append(_Monitor(fn))
+        return fn
 
     def reset (self, port = None, ticks = 2, active = 1):
         """Drive a reset port, tick, then release. Not magic hardware."""
@@ -146,14 +206,23 @@ class Simulator:
         self._dump()
         self._run_checks('comb')
 
-    def posedge (self, clock = None):
+    def posedge (self, clock = None, repeat = 1):
         """One rising edge, or several at the same instant.
 
         Pass a list of clock names for coincident edges: they all take
         their edge before any of them commits, so a flop sampling
         another domain sees that domain's pre-edge value. That is what
         the hardware does, and taking them one after another is not.
+
+        repeat takes that many edges. The answer is how many, which a
+        bench may also await; there is no settle in front of an edge
+        here, which is the difference from tick().
         """
+        repeat = int(repeat)
+        if repeat != 1:
+            for _ in range(repeat):
+                self.posedge(clock)
+            return Cycles(repeat)
         if isinstance(clock, (list, tuple, set)):
             names = [self._name(c) for c in clock]
             if not names:
@@ -169,7 +238,7 @@ class Simulator:
             self.time += self._period(names[0])
             self._fired_now = list(names)
             self._dump()
-            return
+            return Cycles(1)
         self._run_checks('edge')
         clk = self._name(clock) if clock is not None else None
         if self._python is not None:
@@ -180,9 +249,15 @@ class Simulator:
         self.time += self._period(clk or self.clock_name)
         self._fired_now = [clk or self.clock_name]
         self._dump()
+        return Cycles(1)
 
-    def tick (self, n = 1, clock = None):
+    def tick (self, n = 1, clock = None, sample = None):
         """One clock period: settle, then take the edge.
+
+        sample names signals to read as they were before the edge,
+        which is where a bus is worth looking at, and returns them in
+        the order asked for. Without it the answer is the number of
+        clocks taken, which a bench may also await.
 
         A design with more than one clock has to say which one. Ticking
         every domain on an unnamed clock is how a multi-clock design
@@ -199,19 +274,45 @@ class Simulator:
                 "tick() has to name one: tick(n, 'i_wr_clock'). To "
                 'advance them all at their own periods, use '
                 'run(duration).')
+        wanted = list(sample) if sample is not None else None
+        taken = None
         for _ in range(n):
             if self._python is not None:
                 self._python.eval()
+                if wanted is not None and taken is None:
+                    taken = [self.get(s) for s in wanted]
                 self._run_checks('edge')
                 self._python.posedge(clk)
             else:
                 self._native.eval()
+                if wanted is not None and taken is None:
+                    taken = [self.get(s) for s in wanted]
                 self._run_checks('edge')
                 self._native.clock(clk)
             self.cycle += 1
             self.time += self._period(clk or self.clock_name)
             self._fired_now = [clk or self.clock_name]
             self._dump()
+        return taken if wanted is not None else Cycles(n)
+
+    def until (self, condition, limit, clock = None):
+        """Clock until condition() is true, and no longer than limit.
+
+        The limit is required. A bench that waits forever is a bench
+        that hangs continuous integration.
+        """
+        limit = int(limit)
+        for taken in range(limit + 1):
+            self.eval()
+            if condition():
+                return Cycles(taken)
+            if taken == limit:
+                break
+            self.tick(1, clock)
+        raise SimError(f'waited {limit} clocks in {self.top.name} and the '
+                       'condition never came true')
+
+    tick_until = until
 
     def run (self, duration = None, ticks = None):
         """Advance wall-display time, firing each add_clock domain.

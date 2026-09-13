@@ -118,6 +118,27 @@ class EnumMember:
     def __repr__ (self):
         return f'{self.type.name}.{self.name}'
 
+    # a member reads as its value, so sim.get(fsm) == 4 still holds,
+    # and prints as its name, which is what a waveform shows
+    def __eq__ (self, other):
+        if isinstance(other, EnumMember):
+            # by name and value, not by identity: each elaboration
+            # builds its own EnumType, so two runs of one design would
+            # otherwise disagree about their own states
+            return self.name == other.name and self.value == other.value
+        if isinstance(other, int) and not isinstance(other, bool):
+            return self.value == other
+        return NotImplemented
+
+    def __hash__ (self):
+        return hash(self.value)
+
+    def __int__ (self):
+        return self.value
+
+    def __index__ (self):
+        return self.value
+
 
 class EnumType:
     """state = enum('RESET', 'FETCH', encoding = 'auto'); IDLE = 0 keyword

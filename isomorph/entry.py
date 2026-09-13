@@ -11,6 +11,7 @@ bench on any of the three simulators, write SystemVerilog, VHDL or C99,
 lint what was written, dump the IR, or print help.
 """
 import glob
+import inspect
 import os
 import sys
 import time
@@ -215,7 +216,16 @@ def run_test (elaborate, test, opts, prog):
         os.makedirs(directory, exist_ok = True)
         sim.write_vcd(vcd_path, traces = opts.traces)
     started = time.time()
-    test(sim)
+    result = test(sim)
+    if inspect.isawaitable(result):
+        # a bench written with await. There is no scheduler under it:
+        # every call has done its work by the time it is awaited, so
+        # running it to completion is all there is to do
+        try:
+            while True:
+                result.send(None)
+        except StopIteration:
+            pass
     elapsed = time.time() - started
     sim.close()
     print(f'{os.path.basename(prog)}: {opts.backend} backend, '
@@ -225,8 +235,14 @@ def run_test (elaborate, test, opts, prog):
     return 0
 
 
-def main (elaborate, test = None, argv = None, prog = None):
-    """Command line for one design file. Returns an exit code."""
+def main (design, test = None, argv = None, prog = None):
+    """Command line for one design file. Returns an exit code.
+
+    design is the elaborated block, or a function returning one. The
+    function form defers building it until the command line has been
+    read, so --help and a mistyped option answer without elaborating.
+    """
+    elaborate = design if callable(design) else (lambda: design)
     argv = list(sys.argv if argv is None else argv)
     prog = prog or (argv[0] if argv else 'design.py')
     try:
