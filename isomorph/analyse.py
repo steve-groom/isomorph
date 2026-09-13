@@ -211,6 +211,7 @@ class Analyser:
                          ports, signals, dict(e.constants), dict(e.enums),
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
+        mod.constant_exprs = constant_expressions(e.func, e.constants)
         self.check_names(mod)
         self.check_instance_arrays(mod)
         self.check_unused(mod)
@@ -1015,8 +1016,17 @@ class Analyser:
                 if min_width(number) > width:
                     self.error(node, f'{value.value} is {number}, which does '
                                f'not fit in {width} bits')
-                value.width = width
-                return value
+                # A constant is an unsized integer in Verilog and takes
+                # its width from the context, which was enough while a
+                # localparam was a small number the tool could fold.
+                # It is not enough once the localparam carries its own
+                # expression: that is self-determined at integer width
+                # and the assignment reads as a truncation, which is
+                # what Verilator called WIDTHTRUNC on byte_count <=
+                # BYTES_A. Say the width here instead of relying on
+                # the tool's context rules, which is what SPEC 4.2
+                # asks for everywhere else. VHDL already said it.
+                return ir.Expr('extend', width, value.signed, [value])
         if value.width > width:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
@@ -2102,6 +2112,45 @@ def fatal_warnings (warnings):
 # underscore and is not installed here, so it is untested and is
 # ROADMAP item 16.
 VENDOR_ENCODING = {'one_hot': 'onehot'}
+
+
+def constant_expressions (func, names):
+    """The source text of each constant a block assigns at its top level.
+
+    m.constants is name -> int, so WIDTHH = WIDTH // 2 emitted
+    localparam WIDTHH = 16 and said nothing about where sixteen came
+    from. A block body reads as an AST the same way a process body
+    does, and the expression is the author's own text.
+
+    Only a plain assignment at the top level of the block, and only to
+    a name elaboration kept as a constant. A value built in a loop or
+    a comprehension has no single expression to carry, and a plain
+    number says no more than the value already does.
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError, ValueError):
+        return {}
+    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+        return {}
+    out = {}
+    for stmt in tree.body[0].body:
+        if isinstance(stmt, ast.Assign):
+            targets = stmt.targets
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets = [stmt.target]
+        else:
+            continue
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        name = targets[0].id
+        if name not in names or isinstance(stmt.value, ast.Constant):
+            continue
+        text = ast.get_source_segment(source, stmt.value)
+        if text:
+            out[name] = ' '.join(text.split())
+    return out
 
 
 def blackbox_module (node):

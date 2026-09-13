@@ -461,7 +461,10 @@ def emit_module (m):
     ports = port_lines(m) if m.ports else []
     rest = (enum_lines(m) + signal_lines(m) + genvar_lines(m)
             + function_lines(m) + item_lines(m))
-    params = parameter_lines(m, rest + ports)
+    # a localparam that emits its own expression may be the only place
+    # a parameter is named, so the parameter list is decided after
+    locals_ = localparam_lines(m, rest)
+    params = parameter_lines(m, rest + ports + locals_)
     if params:
         lines.append(f'module {m.name} #(')
         lines += params
@@ -472,7 +475,7 @@ def emit_module (m):
     lines.append(');')
     lines.append('')
     body = []
-    body += localparam_lines(m, rest)
+    body += locals_
     body += rest
     # indent body, keep blank lines
     for line in body:
@@ -654,6 +657,47 @@ def _less_one (node):
     return ast.BinOp(node, ast.Sub(), ast.Constant(1))
 
 
+def checked_expression (text, value, scope):
+    """The author's expression as an AST, where it is provably the one
+    that produced this value, or None.
+
+    Every name in it is something in scope, and working it out with
+    their values gives the value elaboration computed. There is no
+    eval here: four arithmetic operators and names the module
+    declares, so there is nothing that could run anything.
+    """
+    if not text:
+        return None
+    try:
+        tree = ast.parse(text, mode = 'eval').body
+    except (SyntaxError, ValueError):
+        return None
+    known = {n: v for n, v in (scope or {}).items()
+             if isinstance(v, int) and not isinstance(v, bool)}
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    if not names or not names <= set(known):
+        return None
+    try:
+        if _width_value(tree, known) != value:
+            return None
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return tree
+
+
+def constant_expression (text, value, scope):
+    """A localparam's own expression rather than the number it came to.
+
+    `WIDTHH = WIDTH // 2` says why sixteen; `localparam WIDTHH = 16`
+    says nothing, and the arithmetic of a block comes out as a set of
+    unrelated numbers. `scope` is what is already declared above this
+    one, so a constant may name a parameter or a constant before it
+    and never one after (PARAMETERS.md stage 1).
+    """
+    tree = checked_expression(text, value, scope)
+    return None if tree is None else _width_text(tree)
+
+
 def width_expression (width_expr, width, scope):
     """The top bit of a declared width, written as the author wrote it.
 
@@ -679,23 +723,8 @@ def width_expression (width_expr, width, scope):
     localparam went out as [WIDTHD-1:0] against a module that never
     declared WIDTHD, and Verilator said so.
     """
-    if not width_expr:
-        return None
-    try:
-        tree = ast.parse(width_expr, mode = 'eval').body
-    except (SyntaxError, ValueError):
-        return None
-    known = {n: v for n, v in (scope or {}).items()
-             if isinstance(v, int) and not isinstance(v, bool)}
-    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-    if not names or not names <= set(known):
-        return None
-    try:
-        if _width_value(tree, known) != width:
-            return None
-    except (ValueError, TypeError, RecursionError):
-        return None
-    return _width_text(_less_one(tree))
+    tree = checked_expression(width_expr, width, scope)
+    return None if tree is None else _width_text(_less_one(tree))
 
 
 def width_parameter (params, width, locals = None):
@@ -859,11 +888,22 @@ def parameter_lines (m, body = None):
 
 
 def localparam_lines (m, body = None):
+    """Constants, each as the author wrote it where that can be read.
+
+    A constant may name a parameter or a constant declared above it,
+    so the scope grows as the list is walked and a constant that was
+    pruned never enters it: naming one that is not there emits a
+    module that does not compile.
+    """
     lines = []
+    scope = dict(m.parameters)
     for name, value in m.constants.items():
         if body is not None and not used_in(name, body):
             continue
-        lines.append(f'    localparam {name} = {sv_number(value)};')
+        text = constant_expression(m.constant_exprs.get(name), value, scope)
+        lines.append(f'    localparam {name} = '
+                     f'{text if text else sv_number(value)};')
+        scope[name] = value
     if lines:
         lines.append('')
     return lines

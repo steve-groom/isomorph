@@ -16,7 +16,9 @@ def dump_module (m):
         out.append(f'  enum {name} [{e.width}] ' + ', '.join(
             f'{x.name}={x.value}' for x in e.members))
     for name, v in m.constants.items():
-        out.append(f'  const {name} = {v}')
+        written = m.constant_exprs.get(name)
+        said = f'  const {name} = {v}'
+        out.append(said + (f'   written {written}' if written else ''))
     for s in m.signals:
         for c in s.comments:
             out.append(f'  {c}')

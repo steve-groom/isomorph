@@ -195,6 +195,9 @@ class Module:
     # every clock-domain crossing in the design, on the top module
     # only: what a timing constraint has to name (ROADMAP item 7)
     crossings: list = field(default_factory = list)
+    # what each constant was written as, where that was an expression
+    # rather than a number: name -> source text (PARAMETERS.md stage 1)
+    constant_exprs: dict = field(default_factory = dict)
 
 
 def render (e):

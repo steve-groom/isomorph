@@ -18,7 +18,8 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError
-from .emit_sv import merge_builds, retarget, width_expression
+from .emit_sv import (merge_builds, retarget, width_expression,
+                      constant_expression)
 from . import reserved
 
 
@@ -778,7 +779,15 @@ def component_lines (ctx):
 
 
 def constant_lines (m):
+    """Constants, each as the author wrote it where that can be read.
+
+    A constant may name a generic or a constant declared above it, so
+    the scope grows as the list is walked. A value too wide for an
+    integer is a bit vector and takes the bits, since the expression
+    would have to be typed to mean anything there.
+    """
     lines = []
+    scope = dict(m.parameters)
     for name, value in m.constants.items():
         if isinstance(value, bool):
             value = int(value)
@@ -789,7 +798,11 @@ def constant_lines (m):
                 f'  constant {name} : std_logic_vector({w - 1} downto 0) '
                 f':= {wide_literal(value, w)};')
         else:
-            lines.append(f'  constant {name} : integer := {value};')
+            text = constant_expression(m.constant_exprs.get(name),
+                                       value, scope)
+            lines.append(f'  constant {name} : integer := '
+                         f'{text if text else value};')
+        scope[name] = value
     if lines:
         lines.append('')
     return lines
