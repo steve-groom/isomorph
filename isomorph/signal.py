@@ -148,9 +148,26 @@ class EnumType:
             raise IsomorphError(
                 f'enum encoding {enc!r} is not one of {", ".join(known)}')
         if enc == 'one_hot':
+            # One bit per state, with bit 0 inverted: the first state
+            # is all zeros and every other state carries bit 0 as well
+            # as its own.
+            #
+            # The first state declared encodes as zero in every
+            # encoding here, and the reason is reset. A full reset
+            # clears every flop, and on an ASIC that is all a reset
+            # does, so a cleared machine has to sit in a state the
+            # design named rather than an illegal one. sequential,
+            # gray and johnson give the first member zero already;
+            # one_hot was the only one that did not.
+            #
+            # It keeps what one-hot is for. Bit k is set in state k and
+            # nowhere else, so every state but the first still decodes
+            # on one bit, and the first decodes on bit 0 being low,
+            # which is also one bit. Both fitters here build exactly
+            # this, so the netlist agrees with the source (SPEC 5.4).
             self.width = max(1, n)
             for index, member in enumerate(self.members):
-                member.value = 1 << index
+                member.value = 0 if index == 0 else (1 << index) | 1
             return
         if enc == 'gray':
             self.width = max(1, (n - 1).bit_length()) if n else 1
