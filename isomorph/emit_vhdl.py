@@ -18,8 +18,8 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError
-from .emit_sv import (merge_builds, retarget, width_expression,
-                      constant_expression)
+from .emit_sv import merge_builds, retarget
+from .widths import width_expression, constant_expression
 from . import reserved
 
 
@@ -914,12 +914,17 @@ class Context:
         self.enum_types = set(module.enums)
         self.sig_width = {}
         self.sig_kind = {}
+        # how each width was written, so a process variable follows the
+        # generic its signal follows (PARAMETERS.md stage 3)
+        self.sig_expr = {}
         for p in module.ports:
             self.sig_width[p.name] = p.width
             self.sig_kind[p.name] = p.kind
+            self.sig_expr[p.name] = p.width_expr
         for s in module.signals:
             self.sig_width[s.name] = s.width
             self.sig_kind[s.name] = s.kind
+            self.sig_expr[s.name] = s.width_expr
 
 
 def array_groups (m):
@@ -1105,8 +1110,10 @@ def process_lines (ctx, p):
         var_map[name] = vname
         width = ctx.sig_width[name]
         kind = ctx.sig_kind.get(name, 'vector')
+        # a process variable is below the constants and may name one
         typ = sl_type(width, kind, None, ctx.m.parameters,
-                      ctx.m.constants)
+                      ctx.m.constants, ctx.sig_expr.get(name),
+                      {**ctx.m.parameters, **ctx.m.constants})
         if kind in ('enum', 'struct'):
             found = None
             for s in ctx.m.signals:
@@ -1535,6 +1542,31 @@ def vhdl_bit (ctx, e):
     return f'{base_t}(to_integer({as_unsigned(ctx, idx)}))'
 
 
+def vhdl_cast_size (ctx, e):
+    """The width of a [hi:0] slice, as the author wrote the bound.
+
+    The VHDL half of cast_size in emit_sv: a slice of an expression is
+    a resize, and folding the width there stops the entity following
+    its own generic. No parentheses needed, since it lands inside a
+    function call rather than beside an apostrophe.
+    """
+    if (len(e.args) < 3 or e.args[2].op != 'const'
+            or e.args[2].value != 0):
+        return None
+    hi = e.args[1]
+    if hi.op == 'const':
+        return None
+    if (hi.op == 'binop' and hi.args[1].op == 'const'
+            and hi.args[0].op == 'ref'):
+        step = hi.args[1].value
+        name = hi.args[0].value
+        if hi.value == '-':
+            return name if step == 1 else f'{name} - {step - 1}'
+        if hi.value == '+':
+            return f'{name} + {step + 1}'
+    return f'{vhdl_index(ctx, hi)} + 1'
+
+
 def vhdl_slice (ctx, e):
     base = e.args[0]
     if base.op not in ('ref', 'bit', 'slice', 'part', 'part_down', 'field',
@@ -1547,7 +1579,8 @@ def vhdl_slice (ctx, e):
             # std_logic_vector() around it.
             low = e.value[1] if len(e.args) < 3 else 0
             return f'resize(unsigned({inner}), {low + 1})({low})'
-        return f'std_logic_vector(resize(unsigned({inner}), {e.width}))'
+        size = vhdl_cast_size(ctx, e) or str(e.width)
+        return f'std_logic_vector(resize(unsigned({inner}), {size}))'
     if len(e.args) >= 3:
         hi = vhdl_index(ctx, e.args[1])
         lo = vhdl_index(ctx, e.args[2])

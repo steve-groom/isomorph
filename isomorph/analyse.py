@@ -9,6 +9,7 @@ import tokenize
 from types import SimpleNamespace, FunctionType
 
 from . import ir
+from .widths import checked_expression
 from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
     sign_extend,
@@ -64,6 +65,14 @@ class Analyser:
         self.port_clocks = set()
         self.sync_inputs = set()
         self.crossings = []
+        # how each signal's width was written, for a cast that has to
+        # follow the generic rather than fold (PARAMETERS.md stage 3)
+        self.width_exprs = {}
+        for name, sig in list(getattr(elaborated, 'signals', {}).items()) \
+                + list(getattr(elaborated, 'arrays', {}).items()):
+            written = getattr(sig, 'width_expr', None)
+            if written:
+                self.width_exprs[name] = written
         self.comments = source_comments(elaborated.func)
         self.file_lines = file_lines(self.file)
         self.consumed = set()           # comment lines already placed
@@ -781,7 +790,8 @@ class Analyser:
         target = ir.Expr('ref', a.target.width, value = tname)
         self.drive(tname, target, lam)
         value = self.expression(lam.body, scope)
-        value = self.fit(value, target.width, lam)
+        value = self.fit(value, target.width, lam,
+                         self.target_width_expr(target))
         return ir.ContAssign(target, value, a.line,
                              self.leading_comments(a.line),
                              self.trailing(a.line))
@@ -921,7 +931,7 @@ class Analyser:
     def assignment (self, target, value, node, scope):
         tgt = self.target(target, scope, node)
         val = self.expression(value, scope)
-        val = self.fit(val, tgt.width, node)
+        val = self.fit(val, tgt.width, node, self.target_width_expr(tgt))
         return ir.Assign(tgt, val, self.line_base + node.lineno)
 
     def field_expr (self, sig, fname, stmt):
@@ -997,7 +1007,27 @@ class Analyser:
             self.error(node, message)
         self.driven[name] = self.current
 
-    def fit (self, value, width, node):
+    def target_width_expr (self, target):
+        """How the target's width was written, if it was written.
+
+        A cast that folds the width is a cast that stops following the
+        generic: 34'(...) in a module whose product_c is [WIDTH+1:0]
+        is right at one width and wrong at every other, so overriding
+        the generic gives a design Verilator refuses. The expression
+        is checked here, where the module's own names are known, and
+        each emitter spells it its own way (PARAMETERS.md stage 3).
+        """
+        if target.op != 'ref':
+            return None
+        written = self.width_exprs.get(target.value)
+        if not written:
+            return None
+        scope = {**self.e.parameters, **self.e.constants}
+        if checked_expression(written, target.width, scope) is None:
+            return None
+        return written
+
+    def fit (self, value, width, node, width_expr = None):
         """The assignment rule (4.3): widen explicitly, never truncate."""
         if value.op == 'const' and value.value is not None:
             if value.signed and value.value < 0:
@@ -1032,7 +1062,8 @@ class Analyser:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
         if value.width < width:
-            return ir.Expr('extend', width, value.signed, [value])
+            return ir.Expr('extend', width, value.signed, [value],
+                           width_expr = width_expr)
         return value
 
     # ---- expressions ------------------------------------------------------

@@ -16,6 +16,9 @@ class Expr:
     value: object = None       # constant value, operator, name, field
     line: int = 0
     base: str = None           # 'hex', 'bin', 'oct': how it was written
+    # for an extend: how the target's width was written, so the cast
+    # follows the generic instead of folding (PARAMETERS.md stage 3)
+    width_expr: str = None
 
     def __repr__ (self):
         return render(self)
