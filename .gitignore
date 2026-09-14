@@ -19,9 +19,10 @@ DATAFLOW.md
 SPEC.txt
 HOUSE_STYLE.md
 
-# the RISC-V core and its harnesses, kept on disk and out of the
-# repository. sbc4_core stays: it is a toy and it is the one the
-# construct tests use
-tests/cores/private
+# cores kept on disk and out of the repository. sbc4_core stays: it is
+# a toy and it is the one the construct tests use
+tests/cores/*
+!tests/cores/NOTES.txt
+!tests/cores/sbc4_core.py
 tests/test_cpu_sim.py
 tests/test_cpu_verilator.py
