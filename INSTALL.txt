@@ -34,8 +34,8 @@ From the development tree:
 
     ./install.sh --tar
 
-That writes isomorph-0.1.0.tar.gz into the current directory. It
-unpacks to a single directory isomorph-0.1.0/ holding
+That writes isomorph-0.2.0.tar.gz into the current directory. It
+unpacks to a single directory isomorph-0.2.0/ holding
 
     install.sh
     INSTALL.txt
@@ -80,7 +80,7 @@ install.sh calls.
 
 Otherwise send them the one file:
 
-    scp isomorph-0.1.0.tar.gz colleague:
+    scp isomorph-0.2.0.tar.gz colleague:
 
 pip installs from the unpacked tree; it does not download isomorph
 from PyPI, so they must have the file on disk before they install.
@@ -90,8 +90,8 @@ must stay on a known version.
 
 4. INSTALL (THEY RUN THIS)
 --------------------------
-    tar xzf isomorph-0.1.0.tar.gz
-    cd isomorph-0.1.0
+    tar xzf isomorph-0.2.0.tar.gz
+    cd isomorph-0.2.0
     ./install.sh
 
 What that does:

@@ -1,6 +1,6 @@
 [project]
 name = "isomorph"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python RTL to unflattened SystemVerilog and VHDL"
 requires-python = ">=3.11"
 readme = "README.md"
