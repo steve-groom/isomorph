@@ -778,7 +778,12 @@ class Analyser:
                 for _, inner in s.arms:
                     self.count_arithmetic(inner, counted)
             elif isinstance(s, ir.For):
+                # the index is elaboration arithmetic inside its own
+                # loop, and the name has left scope by the time this
+                # runs, so lane*8 read as a multiplier
+                self.loop_names.add(s.var)
                 self.count_arithmetic(s.body, counted)
+                self.loop_names.discard(s.var)
             elif isinstance(s, ir.Assert):
                 self.count_in_expr(s.cond, counted)
 
@@ -1065,6 +1070,12 @@ class Analyser:
         if isinstance(node, ast.Subscript):
             inner = self.target(node.value, scope, stmt)
             if isinstance(node.slice, ast.Slice):
+                # the same part-select a read gets (3.6): a byte lane
+                # of a word is written where it is read from, and the
+                # base is a loop variable or a signal either way
+                part = self.part_select(node.slice, inner, scope, stmt)
+                if part is not None:
+                    return part
                 hi, lo, hi_e, lo_e = self.slice_bounds(node.slice, inner,
                                                        scope, stmt)
                 return ir.Expr('slice', hi - lo, args = [inner, hi_e, lo_e],
@@ -1549,8 +1560,14 @@ class Analyser:
         if index is not None:
             if not 0 <= index < base.width:
                 self.error(node, f'bit {index} outside {base.width} bits')
+            if base.width == 1:
+                # the only bit of a one-bit signal is the signal, and
+                # neither language will select a bit of a scalar
+                return base
             return ir.Expr('bit', 1, args = [base, self.bound_expression(
                 node.slice, scope)])
+        if base.width == 1:
+            return base
         idx = self.expression(node.slice, scope)
         return ir.Expr('bit', 1, args = [base, idx])
 

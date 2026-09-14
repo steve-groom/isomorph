@@ -402,6 +402,16 @@ def assign_target (ctx, t, value):
         new = (cur & ~(m << lo)) | ((value & m) << lo)
         _store_expr(ctx, t.args[0], new)
         return
+    if t.op == 'part':
+        # the same as a slice, with the low bit worked out rather than
+        # written: a byte lane is written where it is read from
+        lo = eval_index(ctx, t.args[1])
+        w = t.width
+        cur = eval_expr(ctx, t.args[0], lhs = True)
+        m = mask(w)
+        new = (cur & ~(m << lo)) | ((value & m) << lo)
+        _store_expr(ctx, t.args[0], new)
+        return
     if t.op == 'field':
         lo = int(t.args[1].value) if len(t.args) > 1 else 0
         w = t.width
@@ -440,6 +450,11 @@ def _store_indexed (ctx, base, idx, value, width):
 def _store_expr (ctx, e, value):
     if e.op == 'ref':
         store_ref(ctx, e.value, value, e.width)
+        return
+    if e.op == 'bit' and _is_array_ref(ctx, e.args[0]):
+        # a word of a memory, written a lane at a time
+        _store_indexed(ctx, e.args[0], eval_index(ctx, e.args[1]),
+                       value, e.width)
         return
     raise SimError(f'cannot store through {e.op}')
 

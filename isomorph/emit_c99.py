@@ -1226,6 +1226,13 @@ def c_assign (ctx, s):
         m = mask_expr(w)
         return (f'{dst} = ({dst} & ~(({m}) << {lo})) | '
                 f'(({val} & ({m})) << {lo});')
+    if t.op == 'part':
+        lo = c_index(ctx, t.args[1])
+        w = t.width
+        dst = c_expr(ctx, t.args[0], lhs = True)
+        m = mask_expr(w)
+        return (f'{dst} = ({dst} & ~(({m}) << ({lo}))) | '
+                f'(({val} & ({m})) << ({lo}));')
     if t.op == 'field':
         lo = int(t.args[1].value) if len(t.args) > 1 else 0
         w = t.width

@@ -977,6 +977,9 @@ def array_init_sv (s):
     is not an initial block: SPEC 5.16 bans those for reset values, and
     this is not a reset value, it is what the device is programmed
     with."""
+    if (len(set(s.init)) == 1 and len(s.init) > 1):
+        # a thousand copies of the same word says it once
+        return " = '{default: " + sv_const(s.init[0], s.width) + '}'
     items = ', '.join(sv_const(v, s.width) for v in s.init)
     return " = '{" + items + '}'
 
@@ -1370,6 +1373,10 @@ def sv_expr (e, index = False):
         return f'{sv_expr(base)}[{hi}:{lo}]'
     if op == 'part':
         idx_e = a[1]
+        if idx_e.op in ('binop', 'ref', 'const'):
+            # a lane number is a count, not a vector
+            return (f'{sv_expr(a[0])}[{bound_text(idx_e, wrap = False)} '
+                    f'+: {e.value}]')
         idx = sv_expr(idx_e)
         need = max(1, (a[0].width - 1).bit_length())
         if idx_e.width != need:

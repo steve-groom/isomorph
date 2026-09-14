@@ -359,8 +359,20 @@ def array_init_vhdl (s):
     Wrapped in synthesis translate directives nowhere: an initial value
     on a signal is how VHDL says what a configured block RAM holds, and
     every FPGA tool reads it."""
+    if (len(set(s.init)) == 1 and len(s.init) > 1):
+        return ' := (others => ' + uniform_word(s.init[0], s.width) + ')'
     items = ', '.join(bit_string(v, s.width) for v in s.init)
     return ' := (' + items + ')'
+
+
+def uniform_word (value, width):
+    """A word of one repeated bit says which bit, not the bit a
+    hundred times: (others => \'0\') rather than "000...0"."""
+    if (value == 0):
+        return "(others => '0')"
+    if (value == (1 << width) - 1):
+        return "(others => '1')"
+    return bit_string(value, width)
 
 
 def bit_string (value, width):
