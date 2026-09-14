@@ -84,13 +84,31 @@ What that does:
      asks first and does nothing unless the answer is yes. MyHDL
      leaves this to you; isomorph does not.
 
-`--user` lands in ~/.local/lib/pythonX.Y/site-packages, which
-Python already searches. A writable conda or venv install lands
-next to MyHDL in that environment's site-packages.
+Where it lands:
+
+    ./install.sh          the site-packages of the active python,
+                          which is the directory MyHDL is in
+    ./install.sh --user   the home one, ~/.local/lib/pythonX.Y
+    ./install.sh --target ~/tools/isomorph      a folder of yours
+
+The default is the MyHDL answer: pip puts the package in the
+site-packages of whichever python is active, so a conda or venv
+install lands beside myhdl in that environment and a design file
+imports both the same way. `--user` is the fallback when that
+directory is not writable, and Python searches it already.
+
+`--target DIR` puts the package where you say instead, for a tools
+folder kept outside any environment. It writes one line into
+site-packages, isomorph.pth, holding that directory; Python reads
+.pth files at startup, so the import still needs no PYTHONPATH and
+nothing in .bashrc. install.sh prints the path of that line.
+
+The last thing install.sh prints is where isomorph ended up and,
+if the machine has MyHDL, where that is, so the two can be read
+side by side.
 
     ./install.sh --deps       install the tools without asking
     ./install.sh --no-deps    report them and never ask
-    ./install.sh --user       force the home site-packages
     PYTHON=/path/to/python3.12 ./install.sh       a chosen one
 
 Developers who want the install to track the files on disk:
@@ -195,6 +213,12 @@ pip --upgrade replaces the previous install.
 
 Deleting the unpacked archive does not uninstall the package; run
 pip uninstall as well.
+
+A --target install is not recorded in pip's database, so pip will
+not find it. Remove the two things it wrote:
+
+    rm -rf DIR/isomorph DIR/isomorph-*.dist-info
+    rm <site-packages>/isomorph.pth
 
 
 9. IF IMPORT FAILS

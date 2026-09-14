@@ -9,14 +9,20 @@ VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$HERE/pyproject.toml")
 
 usage () {
     cat <<'EOF'
-usage: install.sh [--tar] [--pack] [--user] [--editable]
-                  [--deps] [--no-deps] [--dest DIR]
+usage: install.sh [--tar] [--pack] [--user] [--target DIR]
+                  [--editable] [--deps] [--no-deps] [--dest DIR]
 
-  default     pip-install this tree, then offer the external tools
+  default     pip-install this tree into the site-packages of the
+              active python, which is where MyHDL is, then offer
+              the external tools
   --tar       write isomorph-<version>.tar.gz and stop
   --pack      copy a clean tree to ~/isomorph and stop
   --user      force pip --user (~/.local) even if a venv or conda
               environment is writable
+  --target DIR
+              put the package in DIR instead, a tools folder of
+              your choosing, and write one .pth line so Python
+              still finds it with no PYTHONPATH
   --editable  pip install -e (developers; points at this tree)
   --deps      install the external tools without asking. Needs root
   --no-deps   report the external tools and never ask
@@ -36,6 +42,7 @@ FORCE_USER=0
 EDITABLE=0
 WANT_DEPS=ask
 DEST=
+TARGET=
 
 while [ $# -gt 0 ]; do
     case $1 in
@@ -43,6 +50,7 @@ while [ $# -gt 0 ]; do
         --tar) MODE=tar ;;
         --pack) MODE=pack ;;
         --user) FORCE_USER=1 ;;
+        --target) TARGET=$2; shift ;;
         --editable) EDITABLE=1 ;;
         --deps) WANT_DEPS=yes ;;
         --no-deps) WANT_DEPS=no ;;
@@ -51,6 +59,12 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+if [ -n "$TARGET" ] && [ "$EDITABLE" -eq 1 ]; then
+    echo "install.sh: --target and --editable are two answers to the"\
+         "same question" >&2
+    exit 2
+fi
 
 PYTHON=${PYTHON:-python3}
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
@@ -119,7 +133,31 @@ pip_try () {
 }
 
 echo "installing isomorph $VERSION from $HERE with $PYTHON"
-if [ "$FORCE_USER" -eq 1 ]; then
+if [ -n "$TARGET" ]; then
+    mkdir -p "$TARGET"
+    TARGET=$(CDPATH= cd -- "$TARGET" && pwd)
+    pip_try --target "$TARGET"
+    PTH=$("$PYTHON" - "$TARGET" <<'PY'
+import os
+import site
+import sys
+
+places = list(getattr(site, 'getsitepackages', list)())
+places.append(site.getusersitepackages())
+for place in places:
+    if os.path.isdir(place) and os.access(place, os.W_OK):
+        break
+else:
+    place = site.getusersitepackages()
+    os.makedirs(place, exist_ok = True)
+path = os.path.join(place, 'isomorph.pth')
+with open(path, 'w', encoding = 'utf-8') as f:
+    f.write(sys.argv[1] + '\n')
+print(path)
+PY
+)
+    echo "found by: $PTH"
+elif [ "$FORCE_USER" -eq 1 ]; then
     pip_try --user || pip_try --user --no-build-isolation
 elif pip_try; then
     :
@@ -139,7 +177,12 @@ from isomorph import (block, signal, signals, enum, always_ff,
     attr, open_port, instances)
 import isomorph
 print('isomorph ok')
-print(' ', isomorph.__file__)
+print('  isomorph', isomorph.__file__)
+try:
+    import myhdl
+    print('  myhdl   ', myhdl.__file__)
+except ImportError:
+    pass
 PY
 
 # Isomorph converts to SystemVerilog and VHDL and simulates in Python
