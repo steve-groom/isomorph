@@ -439,6 +439,30 @@ def replicate (value, count):
     raise IsomorphError('replicate() is read from the AST, not executed')
 
 
+def ones (width):
+    """A run of `width` ones.
+
+    replicate() repeats a pattern, which is what it is for: two of
+    0b1011 is 0b10111011. A string of ones is not a pattern, and
+    replicate(True, STAGES) says so awkwardly. Both languages have a
+    word for this and neither of them counts: SystemVerilog writes
+    \'1 and VHDL (others => \'1\'). This is that word, with the width
+    said out loud so a reader does not have to find the declaration.
+    """
+    raise IsomorphError('ones() is read from the AST, not executed')
+
+
+def zeroes (width):
+    """A run of `width` zeroes, the counterpart of ones().
+
+    A bare 0 is sized to the width this build happened to have, so a
+    register declared signal(WIDTH) is cleared with 4\'d0 and the
+    vendor reads a width mismatch the moment WIDTH is anything else.
+    This one says the width, so there is nothing to mismatch.
+    """
+    raise IsomorphError('zeroes() is read from the AST, not executed')
+
+
 def sign_extend (value, width):
     """value, sign-extended to `width` bits.
 

@@ -3,14 +3,16 @@ import os
 import sys
 
 from .signal import (signal, signals, vector, enum, struct,
-    preload, attr, open_port, concat, replicate, bits, always_comb,
+    preload, attr, open_port, concat, replicate, ones, zeroes, bits,
+    always_comb,
     always_ff, always_ff_async_reset, assign, clock, const, sign_extend,
     instances, IsomorphError)
 from .elaborate import block, Elaborated
 from .blackbox import blackbox, Blackbox
 from .analyse import analyse, fatal_warnings, ConversionError
 from .dump import dump
-from .emit_sv import emit_sv, write_sv, write_sv_files, lint_sv
+from .emit_sv import (emit_sv, write_sv, write_sv_files, lint_sv,
+    clear_splits as _clear_splits)
 from .emit_vhdl import (emit_vhdl, write_vhdl, write_vhdl_files,
                         lint_vhdl)
 from .emit_c99 import emit_c99, write_c99
@@ -22,7 +24,9 @@ from .sim import Simulator
 __all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
            'struct', 'preload', 'attr', 'open_port', 'clock', 'const',
            'concat',
-           'replicate', 'sign_extend', 'bits', 'always_comb', 'always_ff',
+           'replicate', 'ones', 'zeroes', 'sign_extend', 'bits',
+           'always_comb',
+           'always_ff',
            'always_ff_async_reset', 'assign',
            'instances', 'convert', 'emit_sv', 'emit_vhdl', 'emit_c99',
            'emit_sdc', 'write_sdc',
@@ -70,6 +74,7 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
     """
     if not isinstance(top, Elaborated):
         raise IsomorphError('convert() takes an elaborated block instance')
+    _clear_splits()
     modules, warnings = analyse(top, allow_severe)
     if allow_severe:
         for w in fatal_warnings(warnings):

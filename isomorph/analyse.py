@@ -12,9 +12,8 @@ from . import ir
 from .widths import checked_expression
 from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
-    sign_extend,
-    StructType, Process, Assign, Vector, IsomorphError, concat, replicate,
-    bits, vector)
+    sign_extend, StructType, Process, Assign, Vector, IsomorphError, concat,
+    replicate, ones, zeroes, bits, vector)
 from . import reserved
 
 
@@ -1346,7 +1345,7 @@ class Analyser:
             self.error(node, 'operator not supported in hardware')
         left = self.expression(node.left, scope)
         right = self.expression(node.right, scope)
-        if self.kind == 'ff' and op in ('+', '-', '*', '<<', '>>'):
+        if self.kind == 'ff' and op in ('+', '-', '*'):
             # index arithmetic on parameters, constants and unrolled loop
             # variables is settled before the netlist exists: regs[i-1]
             # in a shift register is wiring, not an adder.
@@ -1355,10 +1354,6 @@ class Analyser:
                            'belongs in a comb process that this one selects '
                            'from')
         if op in ('<<', '>>'):
-            if right.op != 'const' and self.kind == 'ff' \
-                    and not self.is_elaboration(right):
-                self.error(node, f'{op} in a clocked process: a barrel '
-                           'shifter belongs in a comb process')
             return ir.Expr('binop', left.width, left.signed, [left, right], op)
         if left.op == 'const' and right.op == 'const':
             v = {'&': left.value & right.value, '|': left.value | right.value,
@@ -1536,11 +1531,20 @@ class Analyser:
             if width == inner.width:
                 return inner
             return ir.Expr('extend', width, True, [inner])
+        if target is ones or target is zeroes:
+            count = self.constant(node.args[0], scope, node)
+            times = self.bound_expression(node.args[0], scope)
+            bit = ir.Expr('const', 1, value = 1 if target is ones else 0)
+            return ir.Expr('replicate', count, args = [bit, times],
+                           value = count)
         if target is replicate:
             inner = self.expression(node.args[0], scope)
             count = self.constant(node.args[1], scope, node)
-            return ir.Expr('replicate', inner.width * count, args = [inner],
-                           value = count)
+            # the count as written, so replicate(True, STAGES) follows
+            # the generic instead of freezing at this build's STAGES
+            times = self.bound_expression(node.args[1], scope)
+            return ir.Expr('replicate', inner.width * count,
+                           args = [inner, times], value = count)
         if target is len:
             obj = self.resolve(node.args[0], scope, node)
             if obj is None or not hasattr(obj, 'width'):
@@ -1574,7 +1578,15 @@ class Analyser:
                 self.error(node, f'{func.id}() in a clocked process: call it '
                            'from a comb process and select the result here')
             return self.function_call(func.id, target, node, scope)
-        self.error(node, f'call to {ast.unparse(func)} is not supported')
+        text = ast.unparse(func)
+        # the block body is read from the AST, so a name that was never
+        # imported does not raise where Python would: it arrives here
+        # as a call to nothing, and saying so saves reading the line
+        if isinstance(func, ast.Name) and func.id in house_names():
+            self.error(node, f'{text}() is an isomorph name that this '
+                       'file does not import. Add it to the '
+                       'from isomorph import (...) line.')
+        self.error(node, f'call to {text} is not supported')
 
     def function_call (self, name, func, node, scope):
         args = [self.expression(a, scope) for a in node.args]
@@ -2144,6 +2156,12 @@ def fatal_warnings (warnings):
 # underscore and is not installed here, so it is untested and is
 # ROADMAP item 16.
 VENDOR_ENCODING = {'one_hot': 'onehot'}
+
+
+def house_names ():
+    """What `from isomorph import ...` can bring in."""
+    from . import __all__ as names
+    return set(names)
 
 
 def constant_expressions (func, names):

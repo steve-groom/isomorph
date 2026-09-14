@@ -1658,6 +1658,12 @@ def vhdl_replicate (ctx, e):
     n = e.value
     inner = e.args[0]
     text = vhdl_expr(ctx, inner)
+    times = e.args[1] if len(e.args) > 1 else None
+    if times is not None and times.op != 'const' and inner.width == 1:
+        # a count that names a generic cannot be a concatenation of
+        # that many terms; the aggregate carries the expression
+        bound = vhdl_expr(ctx, times, True)
+        return f"std_logic_vector'(1 to {bound} => {text})"
     if inner.width == 1:
         if inner.op == 'const':
             bit = '1' if inner.value else '0'

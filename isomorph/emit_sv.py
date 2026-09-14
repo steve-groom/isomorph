@@ -8,6 +8,7 @@ import re
 import textwrap
 import dataclasses
 import os
+import sys
 import subprocess
 
 from . import ir
@@ -128,6 +129,39 @@ def body_key (m, wide = None):
     return text
 
 
+# One block emitted as two modules means some value in the body froze
+# at this build's parameters instead of following the generic. That is
+# a bug in the translator every time, so it says so rather than
+# quietly writing <block>_<PARAM>_<value>.sv
+_SPLITS = set()
+
+
+def clear_splits ():
+    _SPLITS.clear()
+
+
+def report_split (block, group, bodies):
+    """Say which line stopped two builds of one block being one."""
+    key = (block, tuple(m.name for m in group))
+    if key in _SPLITS:
+        return
+    _SPLITS.add(key)
+    names = ', '.join(m.name for m in group)
+    detail = ''
+    first = bodies[group[0].name].splitlines()
+    second = bodies[group[1].name].splitlines()
+    for a, b in zip(first, second):
+        if a != b:
+            detail = (f'; they first differ at {a.strip()!r} '
+                      f'against {b.strip()!r}')
+            break
+    sys.stderr.write(
+        f'warning: {block} is emitted as {len(group)} modules '
+        f'({names}) because their bodies are not the same text{detail}. '
+        'A parameter of the block reached the body as its value rather '
+        'than its name.\n')
+
+
 def merge_builds (modules):
     """One module per distinct body, and what each build must override.
 
@@ -147,8 +181,10 @@ def merge_builds (modules):
     first = {}
     keep = []
     rename = {}
+    bodies = {}
     for m in modules:
-        key = (m.block, body_key(m, wide.get(m.block, {})))
+        bodies[m.name] = body_key(m, wide.get(m.block, {}))
+        key = (m.block, bodies[m.name])
         chosen = first.get(key)
         if chosen is None:
             first[key] = m
@@ -165,6 +201,9 @@ def merge_builds (modules):
     survivors = {}
     for m in keep:
         survivors.setdefault(m.block, []).append(m)
+    for block, group in survivors.items():
+        if len(group) > 1:
+            report_split(block, group, bodies)
     plain = {}
     for block, group in survivors.items():
         if len(group) == 1 and group[0].name != block:
@@ -1297,7 +1336,8 @@ def sv_expr (e, index = False):
     if op == 'concat':
         return '{' + ', '.join(sv_expr(x) for x in a) + '}'
     if op == 'replicate':
-        return '{' + f'{e.value}{{{sv_expr(a[0])}}}' + '}'
+        times = bound_text(a[1]) if len(a) > 1 else str(e.value)
+        return '{' + f'{times}{{{sv_expr(a[0])}}}' + '}'
     if op == 'binop':
         token = e.value
         if token == '>>' and getattr(a[0], 'signed', False):
@@ -1308,6 +1348,10 @@ def sv_expr (e, index = False):
         if index:
             return (f'{sv_expr(a[0], True)} {token} '
                     f'{sv_expr(a[1], True)}')
+        if token in ('<<', '>>', '>>>'):
+            # a shift amount is self-determined, so it is a count and
+            # not a vector: x >> 1, the way it would be typed
+            return f'({sv_expr(a[0])} {token} {sv_expr(a[1], True)})'
         return f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
     if op == 'cmp':
         return f'({sv_expr(a[0])} {e.value} {sv_expr(a[1])})'
