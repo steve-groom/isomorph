@@ -8,3 +8,12 @@ build/
 work-obj*.cf
 tests/cores/work/
 isomorph-*.tar.gz
+
+# internal planning, kept on disk and out of the repository
+ROADMAP.md
+PLAN.txt
+SIM_PLAN.txt
+IFACE_PLAN.txt
+BUILDOUT.md
+PARAMETERS.md
+DATAFLOW.md

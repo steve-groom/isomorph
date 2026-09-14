@@ -98,7 +98,6 @@ bench happened to apply.
   what each construct becomes in each output.
 - [HOUSE_STYLE.md](HOUSE_STYLE.md) — how the RTL is laid out, and why.
 - [INSTALL.txt](INSTALL.txt) — installing, packaging, external tools.
-- [ROADMAP.md](ROADMAP.md) — what is being built, and what was refused.
 
 ## Licence
 
