@@ -7,7 +7,7 @@ USAGE = (
     '[--vhdl] [--c99]\n'
     '                                   [--lint] [--vcd FILE] [-o dir]\n'
     '       python -m isomorph dump design.py\n'
-    '       python -m isomorph doctor\n'
+    '       python -m isomorph doctor [--install]\n'
     '       python -m isomorph style [--fix] [path ...]\n'
     '       python -m isomorph sim-report log.ndjson '
     '[sidecar.json] [events.json]\n'
@@ -19,7 +19,8 @@ USAGE = (
     '  --c99    cycle-accurate C99 smoke (.c, .h, _vcd.c)\n'
     '  --lint   check written HDL with verilator and ghdl\n'
     '  -o dir   output directory (default build/)\n'
-    '  doctor   report which external tools this machine has\n'
+    '  doctor   report which external tools this machine has,\n'
+    '           and --install the missing ones\n'
     '  style    check the house layout rules a machine can check;\n'
     '           --fix repairs bar width and trailing whitespace'
 )

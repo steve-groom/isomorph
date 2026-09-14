@@ -1,10 +1,12 @@
 """External tools isomorph uses, and whether this machine has them.
 
-Nothing here is installed automatically. Installing compilers is the
-machine owner's decision and needs root, so the report prints the exact
-command for the platform it detects and stops there.
+Installing compilers is the machine owner's decision and needs root,
+so the report prints the exact command for the platform it detects
+and stops there. --install runs that command, and asks first unless
+told not to.
 
     python3 -m isomorph doctor
+    python3 -m isomorph doctor --install
 """
 import os
 import platform
@@ -99,6 +101,22 @@ def installer (system = None):
         'arch': (['pacman', '-S', '--needed', '--noconfirm'], True),
         'darwin': (['brew', 'install'], False),
     }.get(system, (None, False))
+
+
+# a machine with no pip cannot install anything, isomorph included
+PIP_PACKAGES = {'debian': 'python3-pip', 'fedora': 'python3-pip',
+                'arch': 'python-pip'}
+
+
+def pip_command (system = None):
+    """How to get pip itself, on a machine that has none."""
+    system = system or distro()
+    package = PIP_PACKAGES.get(system)
+    prefix, needs_sudo = installer(system)
+    if package is None or prefix is None:
+        return None
+    words = (['sudo'] if needs_sudo else []) + prefix + [package]
+    return ' '.join(words)
 
 
 def version_of (tool):
@@ -216,7 +234,51 @@ def report (rows = None):
     return '\n'.join(lines), ok
 
 
+def install (rows = None, ask = True, stream = None):
+    """Run the package manager for what is missing. An exit code.
+
+    Nothing is installed without a yes, and a run with no terminal
+    to ask at prints the command rather than guessing at consent.
+    """
+    stream = sys.stdout if stream is None else stream
+    command = install_command(rows)
+    if command is None:
+        # the report above has already said so
+        return 0
+    if ask:
+        if not sys.stdin.isatty():
+            stream.write('\n  Nothing was installed: no terminal to ask '
+                         'at. Run that\n  yourself, or pass --yes.\n')
+            return 1
+        stream.write('\n  Run it? [y/N] ')
+        stream.flush()
+        try:
+            answer = input()
+        except EOFError:
+            answer = ''
+        if answer.strip().lower() not in ('y', 'yes'):
+            stream.write('  Nothing installed.\n')
+            return 0
+    stream.write(f'  running: {command}\n')
+    stream.flush()
+    code = subprocess.call(command, shell = True)
+    if code == 0:
+        stream.write('\n')
+        stream.write(report()[0])
+    return code
+
+
 def main (argv = None):
-    text, ok = report()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    assume_yes = '--yes' in argv or '-y' in argv
+    wanted = assume_yes or '--install' in argv
+    rest = [a for a in argv if a not in ('--install', '--yes', '-y')]
+    if rest:
+        sys.stderr.write(f'doctor: unknown option {rest[0]}\n')
+        return 2
+    rows = check()
+    text, ok = report(rows)
     sys.stdout.write(text)
-    return 0 if ok else 1
+    if not wanted:
+        return 0 if ok else 1
+    return install(rows, ask = not assume_yes) or (0 if ok else 1)

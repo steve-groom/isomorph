@@ -5,6 +5,33 @@
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO=${ISOMORPH_REPO:-https://github.com/steve-groom/isomorph}
+BRANCH=${ISOMORPH_BRANCH:-main}
+
+# curl | sh arrives with no tree to install from, so fetch one and
+# hand the arguments to the copy inside it. Reading stdin from the
+# terminal, because the pipe this came down is not one
+if [ ! -f "$HERE/isomorph/__init__.py" ]; then
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT INT TERM
+    URL=$REPO/archive/refs/heads/$BRANCH.tar.gz
+    echo "fetching $URL"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$URL" | (cd "$TMP" && tar xzf -)
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$URL" | (cd "$TMP" && tar xzf -)
+    else
+        echo "install.sh: needs curl or wget to fetch isomorph" >&2
+        exit 1
+    fi
+    if (exec < /dev/tty) 2>/dev/null; then
+        sh "$TMP/isomorph-$BRANCH/install.sh" "$@" < /dev/tty
+    else
+        sh "$TMP/isomorph-$BRANCH/install.sh" "$@"
+    fi
+    exit 0
+fi
+
 VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$HERE/pyproject.toml")
 
 usage () {
@@ -72,6 +99,52 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
     exit 1
 fi
 
+if ! "$PYTHON" -c 'import sys; sys.exit(sys.version_info[:2] < (3, 11))'
+then
+    echo "install.sh: isomorph needs Python 3.11 or newer, and" >&2
+    "$PYTHON" -c 'import sys; print(" ", sys.executable, sys.version)' >&2
+    echo "  Mint 22 and Ubuntu 24.04 have 3.12; Mint 21 has 3.10." >&2
+    echo "  PYTHON=/path/to/python3.12 ./install.sh uses another." >&2
+    exit 1
+fi
+
+# --deps and --no-deps answer for every one of these, not only the
+# EDA tools
+ask_and_run () {
+    echo "    $1"
+    if [ "$WANT_DEPS" = no ]; then
+        return 1
+    fi
+    if [ "$WANT_DEPS" != yes ]; then
+        if [ ! -t 0 ]; then
+            return 1
+        fi
+        printf '  Run it? [y/N] '
+        read -r ANSWER
+        case $ANSWER in
+            y|Y|yes|YES) ;;
+            *) return 1 ;;
+        esac
+    fi
+    sh -c "$1"
+}
+
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+    echo "$PYTHON has no pip, and pip is how isomorph installs."
+    PIP_COMMAND=$("$PYTHON" - "$HERE" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from isomorph.deps import pip_command
+print(pip_command() or '')
+PY
+)
+    if [ -z "$PIP_COMMAND" ] || ! ask_and_run "$PIP_COMMAND"; then
+        echo "install.sh: install pip for $PYTHON, then run this again" >&2
+        exit 1
+    fi
+fi
+
 copy_tree () {
     src=$1
     dst=$2
@@ -83,7 +156,7 @@ copy_tree () {
             --exclude '*.egg-info' \
             "$src/isomorph/" "$dst/isomorph/"
         cp -f "$src/pyproject.toml" "$src/install.sh" "$src/INSTALL.txt" \
-            "$dst/"
+            "$src/README.md" "$src/LICENSE" "$dst/"
         if [ -f "$src/SPEC.txt" ]; then
             cp -f "$src/SPEC.txt" "$dst/"
         fi
@@ -92,7 +165,8 @@ copy_tree () {
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             --exclude='*.egg-info' \
-            isomorph pyproject.toml install.sh INSTALL.txt SPEC.txt) |
+            isomorph pyproject.toml install.sh INSTALL.txt \
+            README.md LICENSE SPEC.txt) |
             (cd "$dst" && tar xf -)
     fi
     chmod +x "$dst/install.sh"
@@ -132,6 +206,12 @@ pip_try () {
     "$PYTHON" -m pip install $PIP_FLAGS "$@" "$HERE"
 }
 
+# --break-system-packages is for the distributions that mark their
+# python externally managed, Mint and Ubuntu among them; with --user
+# it writes to the home site-packages and never the system one.
+# --no-build-isolation is for a machine that cannot reach PyPI for
+# setuptools
+
 echo "installing isomorph $VERSION from $HERE with $PYTHON"
 if [ -n "$TARGET" ]; then
     mkdir -p "$TARGET"
@@ -158,15 +238,18 @@ PY
 )
     echo "found by: $PTH"
 elif [ "$FORCE_USER" -eq 1 ]; then
-    pip_try --user || pip_try --user --no-build-isolation
+    pip_try --user \
+        || pip_try --user --break-system-packages \
+        || pip_try --user --break-system-packages --no-build-isolation
 elif pip_try; then
     :
 elif pip_try --user; then
     :
+elif pip_try --user --break-system-packages; then
+    :
 else
-    # a machine with no network cannot fetch setuptools to build with
     echo "retrying without build isolation" >&2
-    pip_try --user --no-build-isolation
+    pip_try --user --break-system-packages --no-build-isolation
 fi
 
 # from / so the tree we just installed from cannot answer instead of
@@ -187,36 +270,14 @@ PY
 
 # Isomorph converts to SystemVerilog and VHDL and simulates in Python
 # with none of these installed. gcc, verilator and ghdl switch on the
-# other two simulator backends and --lint.
+# other two simulator backends and --lint. doctor does the asking, so
+# a pip install straight from git gets the same offer this does.
 echo
-"$PYTHON" -m isomorph doctor || true
-
-COMMAND=
-if [ "$WANT_DEPS" != no ]; then
-    COMMAND=$("$PYTHON" -c \
-        'import isomorph.deps as d; print(d.install_command() or "")')
-fi
-
-if [ -n "$COMMAND" ]; then
-    RUN=$WANT_DEPS
-    if [ "$RUN" = ask ]; then
-        RUN=no
-        if [ -t 0 ]; then
-            printf '\ninstall the missing ones now?\n    %s\n[y/N] ' \
-                "$COMMAND"
-            read -r ANSWER
-            case $ANSWER in
-                y|Y|yes|YES) RUN=yes ;;
-            esac
-        fi
-    fi
-    if [ "$RUN" = yes ]; then
-        echo "running: $COMMAND"
-        sh -c "$COMMAND"
-        echo
-        "$PYTHON" -m isomorph doctor || true
-    fi
-fi
+case $WANT_DEPS in
+    yes) "$PYTHON" -m isomorph doctor --install --yes || true ;;
+    ask) "$PYTHON" -m isomorph doctor --install || true ;;
+    *)   "$PYTHON" -m isomorph doctor || true ;;
+esac
 
 echo
 echo "done. New Python sessions can use the house import."

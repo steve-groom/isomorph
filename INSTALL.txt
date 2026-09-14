@@ -55,12 +55,37 @@ A plain directory instead of an archive, to scp or to keep:
 
 3. GIVE IT TO A COLLEAGUE
 -------------------------
-Send them the one file:
+On a machine with a network, one line does all of it:
+
+    curl -fsSL \
+    https://raw.githubusercontent.com/steve-groom/isomorph/main/install.sh \
+    | sh
+
+install.sh notices it has no tree around it, fetches one from
+GitHub into a temporary directory, installs from that and deletes
+it. Everything section 4 describes then happens as if they had
+unpacked a tarball, the offer of external tools included, and the
+prompts read from the terminal rather than from the pipe. Options
+go after the pipe: `| sh -s -- --deps`.
+
+The same in two steps, if they have pip already and want the
+package alone:
+
+    pip install git+https://github.com/steve-groom/isomorph
+    isomorph doctor --install
+
+pip clones and installs the package; install.sh never runs, so the
+second line is what offers the external tools. It is the same code
+install.sh calls.
+
+Otherwise send them the one file:
 
     scp isomorph-0.1.0.tar.gz colleague:
 
 pip installs from the unpacked tree; it does not download isomorph
 from PyPI, so they must have the file on disk before they install.
+This is the way in for a machine behind a firewall, or one that
+must stay on a known version.
 
 
 4. INSTALL (THEY RUN THIS)
@@ -79,10 +104,11 @@ What that does:
   2. Imports the house names from outside the unpacked tree and
      prints the installed file path, so the tree sitting in the
      current directory cannot answer for site-packages.
-  3. Reports which external tools the machine has and offers to
-     install the missing ones (section 10). That needs root, so it
-     asks first and does nothing unless the answer is yes. MyHDL
-     leaves this to you; isomorph does not.
+  3. Runs `isomorph doctor --install`, which reports which
+     external tools the machine has and offers to install the
+     missing ones (section 10). That needs root, so it asks first
+     and does nothing unless the answer is yes. MyHDL leaves this
+     to you; isomorph does not.
 
 Where it lands:
 
@@ -287,10 +313,17 @@ Ask what this machine has:
 
 It prints one line per tool and, if any are missing, the exact
 command to install them for the platform it detects (apt-get, dnf,
-pacman or brew). It does not run that command. Installing compilers
-needs root and is the machine owner's decision, so it is opt in:
+pacman or brew). To act on that:
 
-    ./install.sh --deps
+    python3 -m isomorph doctor --install        asks first
+    python3 -m isomorph doctor --install --yes  does not ask
+
+Installing compilers needs root and is the machine owner's
+decision, so it is always opt in. --install with no terminal to
+ask at prints the command and installs nothing, rather than
+guessing at consent. ./install.sh --deps is the same thing at
+install time.
 
 Nothing external is required, so doctor exits 0 with tools missing.
-It exits 1 only if Python itself is too old, which is 3.11.
+It exits 1 only if Python itself is too old, which is 3.11, or if
+--install was asked for and could not be done.
