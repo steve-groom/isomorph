@@ -1618,7 +1618,10 @@ class Analyser:
                            'to add.')
             if width == inner.width:
                 return inner
-            return ir.Expr('extend', width, True, [inner])
+            # the width of the answer as it was written, so
+            # sign_extend(x, WIDTH + 1) follows the generic
+            return ir.Expr('extend', width, True, [inner],
+                           width_expr = ast.unparse(node.args[1]))
         if target is ones or target is zeroes:
             count = self.constant(node.args[0], scope, node)
             times = self.bound_expression(node.args[0], scope)
