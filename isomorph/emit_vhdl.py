@@ -1906,6 +1906,10 @@ def operand_size (ctx, nodes, target):
         # of its value, so WORD'length is 32 whatever 0xC0FFEE needs
         if ctx.sig_width.get(named.value) != named.width:
             continue
+        # a single bit is a std_logic here and not an array, and
+        # 'length wants an array: ghdl says object prefix must be one
+        if named.width < 2:
+            continue
         text = vhdl_expr(ctx, named)
         if not text.isidentifier() or target < named.width:
             continue
@@ -1932,7 +1936,7 @@ def extend_size (ctx, e, inner):
     if text:
         return text
     node = e.args[0]
-    if (inner.isidentifier() and node.op == 'ref'
+    if (inner.isidentifier() and node.op == 'ref' and node.width > 1
             and ctx.sig_width.get(node.value) == node.width):
         grown = e.width - node.width
         if grown > 0:
