@@ -157,16 +157,13 @@ copy_tree () {
             "$src/isomorph/" "$dst/isomorph/"
         cp -f "$src/pyproject.toml" "$src/install.sh" "$src/INSTALL.txt" \
             "$src/README.md" "$src/LICENSE" "$dst/"
-        if [ -f "$src/SPEC.txt" ]; then
-            cp -f "$src/SPEC.txt" "$dst/"
-        fi
     else
         (cd "$src" && tar cf - \
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             --exclude='*.egg-info' \
             isomorph pyproject.toml install.sh INSTALL.txt \
-            README.md LICENSE SPEC.txt) |
+            README.md LICENSE) |
             (cd "$dst" && tar xf -)
     fi
     chmod +x "$dst/install.sh"

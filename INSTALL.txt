@@ -40,7 +40,6 @@ unpacks to a single directory isomorph-0.2.0/ holding
     install.sh
     INSTALL.txt
     pyproject.toml
-    SPEC.txt
     isomorph/                the Python package
 
 Caches, egg-info and __pycache__ are left out. Somewhere else:
@@ -152,7 +151,7 @@ Developers who want the install to track the files on disk:
     ./install.sh --editable
 
 The unpacked directory can be deleted afterwards; the package is
-in site-packages. Keep it if you want SPEC.txt to hand.
+in site-packages.
 
 
 5. CHECK

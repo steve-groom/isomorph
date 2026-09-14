@@ -94,10 +94,12 @@ bench happened to apply.
 
 ## Reading
 
-- [SPEC.txt](SPEC.txt) — the language: what is legal Python here and
-  what each construct becomes in each output.
-- [HOUSE_STYLE.md](HOUSE_STYLE.md) — how the RTL is laid out, and why.
 - [INSTALL.txt](INSTALL.txt) — installing, packaging, external tools.
+
+A guide to writing isomorph is being written. Until then the
+`examples/` directory and the blocks under `isomorph/lib/` are the
+worked ones, and `python3 design.py --help` lists what a design file
+can do.
 
 ## Licence
 
