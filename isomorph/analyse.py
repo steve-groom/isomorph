@@ -195,6 +195,8 @@ class Analyser:
                                   None, dict(a.attributes), len(a),
                                   a.line,
                                   width_expr = getattr(a, 'width_expr',
+                                                       None),
+                                  array_expr = getattr(a, 'count_expr',
                                                        None)))
         signals.sort(key = lambda s: s.line)
         previous = e.func.__code__.co_firstlineno
@@ -220,6 +222,10 @@ class Analyser:
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
         mod.constant_exprs = constant_expressions(e.func, e.constants)
+        written = array_expressions(e.func, e.arrays)
+        for sig in mod.signals:
+            if sig.array and sig.name in written:
+                sig.array_expr = written[sig.name]
         self.warnings += promote_port_widths(mod)
         self.check_names(mod)
         self.check_instance_arrays(mod)
@@ -872,7 +878,11 @@ class Analyser:
         body = self.block_body(node.body, scope, node.lineno)
         self.loop_names.discard(node.target.id)
         del scope.locals[node.target.id]
+        written = [self.bound_expression(a, scope) for a in call.args]
+        start_expr, stop_expr = ((None, written[0]) if len(written) == 1
+                                 else (written[0], written[1]))
         return ir.For(node.target.id, start, stop, body,
+                      start_expr, stop_expr,
                       self.line_base + node.lineno)
 
     def match_stmt (self, node, scope):
@@ -1438,6 +1448,18 @@ class Analyser:
                 and not isinstance(node.slice, ast.Slice)):
             index = self.constant_or_none(node.slice, scope)
             if index is not None:
+                # sample[STAGES-1] names an element of the array the
+                # HDL declares, so it is indexed there rather than
+                # resolved to the element this build happens to mean
+                written = self.bound_expression(node.slice, scope)
+                if written is not None and written.op != 'const':
+                    name = (self.name_of(base_obj)
+                            if isinstance(base_obj, SignalArray)
+                            else ast.unparse(node.value))
+                    self.read.add(name)
+                    return ir.Expr('bit', base_obj.width, args = [
+                        ir.Expr('ref', base_obj.width, value = name),
+                        written])
                 element = base_obj[index]
                 name = self.name_of(element)
                 self.read.add(name)
@@ -2162,6 +2184,39 @@ def house_names ():
     """What `from isomorph import ...` can bring in."""
     from . import __all__ as names
     return set(names)
+
+
+def array_expressions (func, names):
+    """How each array's element count was written, from the block AST.
+
+    signals() reads its own call site, which works for a file on disk
+    and not for a block compiled from a string. The block body is an
+    AST here either way, and an array whose count folds while the
+    loop over it does not is worse than one that folds everywhere:
+    the loop would write past the end of it.
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError, ValueError):
+        return {}
+    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+        return {}
+    out = {}
+    for stmt in ast.walk(tree.body[0]):
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        call = stmt.value
+        if not (isinstance(target, ast.Name) and target.id in names
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == 'signals' and call.args):
+            continue
+        if isinstance(call.args[0], ast.Constant):
+            continue
+        out[target.id] = ' '.join(ast.unparse(call.args[0]).split())
+    return out
 
 
 def constant_expressions (func, names):

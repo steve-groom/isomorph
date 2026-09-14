@@ -294,6 +294,8 @@ class SignalArray(list):
         super().__init__(Signal(width, kind = 'bit' if width == 1
                                 else 'vector') for _ in range(count))
         self.width = width
+        self.count = count
+        self.count_expr = None
         self.name = None
         self.attributes = {}
         self.line = _caller_line()
@@ -388,6 +390,10 @@ def preload (array, values):
 def signals (count, width = 1, style = None):
     array = SignalArray(count, width)
     written = _written_as(1, 'width')
+    # how many, as written, so signals(STAGES, W) declares STAGES of
+    # them in the HDL rather than the number this build happened to
+    # elaborate with
+    array.count_expr = _written_as(0, 'count')
     array.width_expr = written
     for element in array:
         element.width_expr = written

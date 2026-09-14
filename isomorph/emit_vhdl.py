@@ -18,7 +18,7 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError
-from .emit_sv import merge_builds, retarget
+from .emit_sv import merge_builds, INDEX_PRECEDENCE, retarget
 from .widths import width_expression, constant_expression
 from . import reserved
 
@@ -255,7 +255,7 @@ def emit_package (modules):
                     seen.add(tname)
                     types.append(array_type_decl(tname, p.width, p.array))
         for s in m.signals:
-            if s.array:
+            if s.array and local_array_type(s, m) is None:
                 tname = array_type_name(s.name, s.width, s.array)
                 if tname not in seen:
                     seen.add(tname)
@@ -301,6 +301,50 @@ def array_type_decl (tname, width, count):
     # house style keeps to, so the array half goes on its own line
     return (f'type {tname} is\n'
             f'    array (0 to {count - 1}) of {elem};')
+
+
+def local_array_type (s, m):
+    """The type name for an array whose shape is a generic, or None.
+
+    A type named for its shape has to live in the package so two
+    entities can share it, and that name carries a number. An array
+    sized by a generic has no one number, so its type is declared in
+    the architecture and named for the signal. Nothing outside can
+    see it, and nothing outside needs to: a port array still takes
+    the package type.
+    """
+    scope = {**m.parameters, **m.constants}
+    count = constant_expression(s.array_expr, s.array, scope)
+    width = (None if s.width == 1
+             else constant_expression(s.width_expr, s.width, scope))
+    if count is None and width is None:
+        return None
+    return f'{s.name}_array_t'
+
+
+def local_array_lines (m):
+    """Array types the architecture declares for itself."""
+    lines = []
+    scope = {**m.parameters, **m.constants}
+    for s in m.signals:
+        if not s.array:
+            continue
+        tname = local_array_type(s, m)
+        if tname is None:
+            continue
+        count = constant_expression(s.array_expr, s.array, scope)
+        last = f'{count} - 1' if count else str(s.array - 1)
+        elem = sl_type(s.width, 'vector', None, m.parameters, m.constants,
+                       s.width_expr, scope)
+        line = f'  type {tname} is array (0 to {last}) of {elem};'
+        if len(line) <= HOUSE_LIMIT:
+            lines.append(line)
+        else:
+            lines.append(f'  type {tname} is')
+            lines.append(f'      array (0 to {last}) of {elem};')
+    if lines:
+        lines.append('')
+    return lines
 
 
 def array_init_vhdl (s):
@@ -529,8 +573,12 @@ def emit_unit (m, by_name, top_name, wide = None):
     lines.append('library ieee;')
     lines.append('use ieee.std_logic_1164.all;')
     lines.append('use ieee.numeric_std.all;')
+    # an array whose type the architecture declares for itself is not
+    # a reason to use the package, and may be the only reason there
+    # would have been one
     needs_pkg = (any(p.array for p in m.ports)
-                 or any(s.array for s in m.signals)
+                 or any(s.array and local_array_type(s, m) is None
+                        for s in m.signals)
                  or any(p.kind == 'struct' for p in m.ports)
                  or any(s.kind == 'struct' for s in m.signals))
     if needs_pkg:
@@ -719,6 +767,7 @@ def architecture_lines (m, by_name, wide = None):
     lines = [f'architecture rtl of {m.name} is']
     lines += constant_lines(m)
     lines += enum_decl_lines(m)
+    lines += local_array_lines(m)
     lines += signal_lines(m)
     lines += attribute_lines(m)
     functions = function_decl_lines(ctx)
@@ -828,7 +877,8 @@ def signal_lines (m):
     for s in m.signals:
         lines += comment_lines(s.comments, 2)
         if s.array:
-            typ = array_type_name(s.name, s.width, s.array)
+            typ = (local_array_type(s, m)
+                   or array_type_name(s.name, s.width, s.array))
         else:
             typ = sl_type(s.width, s.kind, s.type, m.parameters,
                           m.constants, s.width_expr,
@@ -1225,8 +1275,13 @@ def if_lines (ctx, node, indent):
 
 def for_lines (ctx, node, indent):
     pad = ' ' * indent
-    last = node.stop - 1
-    head = f'{pad}for {node.var} in {node.start} to {last} loop'
+    start = (vhdl_index(ctx, node.start_expr)
+             if node.start_expr is not None else node.start)
+    if node.stop_expr is not None:
+        last = f'{vhdl_index_bound(ctx, node.stop_expr, 1)} - 1'
+    else:
+        last = node.stop - 1
+    head = f'{pad}for {node.var} in {start} to {last} loop'
     lines = [with_trailing(head, node.trailing)]
     # loop index is an integer; treat as int name while in the body
     ctx.int_names.add(node.var)
@@ -1412,8 +1467,9 @@ def vhdl_expr (ctx, e, index = False):
         return vhdl_replicate(ctx, e)
     if op == 'binop':
         if index:
-            return (f'{vhdl_expr(ctx, a[0], True)} {e.value} '
-                    f'{vhdl_expr(ctx, a[1], True)}')
+            outer = INDEX_PRECEDENCE.get(e.value, 0)
+            return (f'{vhdl_index_operand(ctx, a[0], outer)} {e.value} '
+                    f'{vhdl_index_operand(ctx, a[1], outer, True)}')
         return vhdl_binop(ctx, e)
     if op == 'cmp':
         return f'to_sl({vhdl_cmp_bool(ctx, e)})'
@@ -1537,6 +1593,10 @@ def vhdl_bit (ctx, e):
         if (idx.op == 'const'
                 or (idx.op == 'ref' and idx.value in ctx.int_names)):
             return f'{base_t}({vhdl_expr(ctx, idx, True)})'
+        if idx.op == 'binop':
+            # an integer index stays an integer: vhdl_index already
+            # converts whichever operand is a vector
+            return f'{base_t}({vhdl_index(ctx, idx)})'
         return f'{base_t}(to_integer({as_unsigned(ctx, idx)}))'
     if idx.op == 'const':
         return f'{base_t}({int(idx.value)})'
@@ -1621,6 +1681,19 @@ def vhdl_part_down (ctx, e):
     return f'{vhdl_expr(ctx, base)}(({i}) downto ({i}) - {w - 1})'
 
 
+def vhdl_index_bound (ctx, e, outer = 0, right = False):
+    """One side of an integer bound, bracketed only where precedence
+    needs it."""
+    text = vhdl_index(ctx, e)
+    if e.op != 'binop':
+        return text
+    inner = INDEX_PRECEDENCE.get(e.value, 0)
+    if (outer == 0 or inner == 0 or inner < outer
+            or (right and inner == outer)):
+        return f'({text})'
+    return text
+
+
 def vhdl_index (ctx, e):
     """Integer index / bound expression."""
     if e.op == 'const':
@@ -1635,12 +1708,10 @@ def vhdl_index (ctx, e):
         return f'to_integer(unsigned({mapped}))'
     if e.op == 'binop':
         op = e.value
-        if op == '*':
-            # scale: integer * integer
-            return (f'({vhdl_index(ctx, e.args[0])} * '
-                    f'{vhdl_index(ctx, e.args[1])})')
-        return (f'({vhdl_index(ctx, e.args[0])} {op} '
-                f'{vhdl_index(ctx, e.args[1])})')
+        outer = INDEX_PRECEDENCE.get(op, 0)
+        left = vhdl_index_bound(ctx, e.args[0], outer)
+        right = vhdl_index_bound(ctx, e.args[1], outer, True)
+        return f'{left} {op} {right}'
     if e.op in ('bit', 'slice', 'part'):
         text = vhdl_expr(ctx, e)
         if e.width == 1:
@@ -1652,6 +1723,22 @@ def vhdl_index (ctx, e):
     if e.width == 1:
         return f"to_integer(unsigned'('0' & {vhdl_expr(ctx, e)}))"
     return f'to_integer(unsigned({vhdl_expr(ctx, e)}))'
+
+
+def vhdl_index_operand (ctx, e, outer = 0, right = False):
+    """One side of a bound expression, bracketed only where precedence
+    needs it: (STAGES-1)*WIDTHD is not STAGES-1*WIDTHD, and a bound
+    nobody has to decode is the point of writing it as the author did."""
+    text = vhdl_expr(ctx, e, True)
+    if e.op == 'unop':
+        return f'({text})'
+    if e.op != 'binop':
+        return text
+    inner = INDEX_PRECEDENCE.get(e.value, 0)
+    if (outer == 0 or inner == 0 or inner < outer
+            or (right and inner == outer)):
+        return f'({text})'
+    return text
 
 
 def vhdl_replicate (ctx, e):

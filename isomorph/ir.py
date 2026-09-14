@@ -59,6 +59,11 @@ class For:
     start: int
     stop: int
     body: list
+    # the bounds as they were written, when they name a parameter:
+    # range(1, STAGES) is a loop to STAGES, not to the 3 this build
+    # elaborated with
+    start_expr: object = None
+    stop_expr: object = None
     line: int = 0
     comments: list = field(default_factory = list)
     trailing: str = None
@@ -106,6 +111,8 @@ class Sig:
     # how the width was written, when it was an expression over the
     # module's parameters rather than a number (SPEC 3.6, 4.1)
     width_expr: str = None
+    # and how the element count was written, for an array
+    array_expr: str = None
 
 
 @dataclass

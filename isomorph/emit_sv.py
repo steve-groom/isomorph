@@ -917,7 +917,7 @@ def signal_lines (m):
                              {**m.parameters, **m.constants})
         name = s.name
         if s.array:
-            name = f'{name} [{s.array}]'
+            name = f'{name} [{array_size(s, m)}]'
         lines += attribute_lines(s.attributes, 4)
         tail = array_init_sv(s) if s.array and s.init else ''
         lines += trailing_lines(f'    {packed} {name}{tail};',
@@ -1197,8 +1197,12 @@ def if_lines (node, indent, nonblocking):
 
 def for_lines (node, indent, nonblocking):
     pad = ' ' * indent
-    head = (f'{pad}for (int {node.var} = {node.start}; '
-            f'{node.var} < {node.stop}; {node.var}++) begin')
+    start = (bound_text(node.start_expr) if node.start_expr is not None
+             else node.start)
+    stop = (bound_text(node.stop_expr) if node.stop_expr is not None
+            else node.stop)
+    head = (f'{pad}for (int {node.var} = {start}; '
+            f'{node.var} < {stop}; {node.var}++) begin')
     lines = [with_trailing(head, node.trailing)]
     lines += stmt_lines(node.body, indent + 4, nonblocking)
     lines.append(f'{pad}end')
@@ -1285,6 +1289,11 @@ def sv_expr (e, index = False):
                 # command[1] came out as command[1'b1] and verilator
                 # asked for the two bits a three-deep array indexes with
                 return f'{sv_expr(a[0])}[{sv_expr(idx_e, index = True)}]'
+            if idx_e.op == 'binop':
+                # STAGES-1 and i-1 are elaboration arithmetic: an
+                # index, not a vector, and a sized literal in one is
+                # the WIDTHEXPAND verilator reports
+                return f'{sv_expr(a[0])}[{bound_text(idx_e)}]'
             return f'{sv_expr(a[0])}[{sv_expr(idx_e)}]'
         if idx_e.op == 'const':
             idx = sv_expr(idx_e, index = True)
@@ -1346,8 +1355,12 @@ def sv_expr (e, index = False):
             # is already arithmetic, and the two must agree.
             token = '>>>'
         if index:
-            return (f'{sv_expr(a[0], True)} {token} '
-                    f'{sv_expr(a[1], True)}')
+            # a slice bound is written without sized literals, and a
+            # nested one has to keep its brackets: (STAGES-1)*WIDTHD
+            # is not STAGES-1*WIDTHD
+            outer = INDEX_PRECEDENCE.get(token, 0)
+            return (f'{sv_index_operand(a[0], outer)} {token} '
+                    f'{sv_index_operand(a[1], outer, True)}')
         if token in ('<<', '>>', '>>>'):
             # a shift amount is self-determined, so it is a count and
             # not a vector: x >> 1, the way it would be typed
@@ -1408,6 +1421,34 @@ def cast_size (hi):
         if hi.value == '+':
             return f'({name}+{step + 1})'
     return f'({bound_text(hi)}+1)'
+
+
+# * binds tighter than + -, and anything not named here is
+# bracketed rather than guessed at
+INDEX_PRECEDENCE = {'*': 2, '/': 2, '%': 2, '+': 1, '-': 1}
+
+
+def sv_index_operand (e, outer = 0, right = False):
+    """One side of a bound expression, bracketed only where precedence
+    needs it: (STAGES-1)*WIDTHD is not STAGES-1*WIDTHD, and a bound
+    nobody has to decode is the point of writing it as the author did."""
+    text = sv_expr(e, index = True)
+    if e.op == 'unop':
+        return f'({text})'
+    if e.op != 'binop':
+        return text
+    inner = INDEX_PRECEDENCE.get(e.value, 0)
+    if (outer == 0 or inner == 0 or inner < outer
+            or (right and inner == outer)):
+        return f'({text})'
+    return text
+
+
+def array_size (s, m):
+    """How many elements, as the author wrote it."""
+    scope = {**m.parameters, **m.constants}
+    text = constant_expression(s.array_expr, s.array, scope)
+    return text or str(s.array)
 
 
 def bound_text (e):
