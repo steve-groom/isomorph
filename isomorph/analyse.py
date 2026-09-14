@@ -75,7 +75,6 @@ class Analyser:
         self.comments = source_comments(elaborated.func)
         self.file_lines = file_lines(self.file)
         self.consumed = set()           # comment lines already placed
-        self.loop_names = set()         # for-loop indices currently open
 
     def name_of (self, sig):
         """A signal's name inside this block: its port name here if it
@@ -719,8 +718,6 @@ class Analyser:
         if proc.kind == 'comb':
             self.check_complete(body, proc.name, proc)
             self.check_rbw(body, set(self.assigned_here), proc)
-        if proc.kind == 'ff':
-            self.check_shared_arithmetic(body, proc)
         reset = None
         if getattr(proc, 'reset', None) is not None:
             reset = self.name_of(proc.reset)
@@ -740,64 +737,6 @@ class Analyser:
                           proc.line, [], reset,
                           getattr(proc, 'reset_polarity', 'pos'),
                           getattr(proc, 'reason', None))
-
-    def check_shared_arithmetic (self, body, proc):
-        """One adder built twice in one clocked process.
-
-        HOUSE_STYLE asks for arithmetic next values to be precalculated
-        in comb, and the cost it is about is an adder per branch: one
-        continuous calculation that every branch selects from is one
-        adder where writing it out each time is several. A single
-        increment in a single branch is one adder either way, and
-        moving it buys a named wire and nothing else, so only the
-        repeat is worth saying anything about.
-        """
-        counted = {}
-        self.count_arithmetic(body, counted)
-        for text, times in sorted(counted.items()):
-            if times > 1:
-                self.warnings.append(
-                    f'{proc.name}: {text} is built {times} times in one '
-                    'clocked process. Calculate it once in a comb '
-                    'process and select the result here, so the fitter '
-                    'shares one adder rather than building one per '
-                    'branch.')
-
-    def count_arithmetic (self, body, counted):
-        """How many times each + - * expression is written out."""
-        for s in body or []:
-            if isinstance(s, ir.Assign):
-                self.count_in_expr(s.value, counted)
-                self.count_in_expr(s.target, counted)
-            elif isinstance(s, ir.If):
-                for cond, inner in s.branches:
-                    self.count_in_expr(cond, counted)
-                    self.count_arithmetic(inner, counted)
-            elif isinstance(s, ir.Match):
-                self.count_in_expr(s.subject, counted)
-                for _, inner in s.arms:
-                    self.count_arithmetic(inner, counted)
-            elif isinstance(s, ir.For):
-                # the index is elaboration arithmetic inside its own
-                # loop, and the name has left scope by the time this
-                # runs, so lane*8 read as a multiplier
-                self.loop_names.add(s.var)
-                self.count_arithmetic(s.body, counted)
-                self.loop_names.discard(s.var)
-            elif isinstance(s, ir.Assert):
-                self.count_in_expr(s.cond, counted)
-
-    def count_in_expr (self, e, counted):
-        if e is None or not hasattr(e, 'op'):
-            return
-        if e.op == 'binop' and e.value in ('+', '-', '*'):
-            # a bound settled before the netlist exists is not an adder
-            left, right = e.args[0], e.args[1]
-            if not (self.is_elaboration(left) and self.is_elaboration(right)):
-                text = plain_text(e)
-                counted[text] = counted.get(text, 0) + 1
-        for arg in (e.args or []):
-            self.count_in_expr(arg, counted)
 
     def check_async_reset (self, body, reset, proc):
         """The body of an asynchronous-reset flop is exactly one if/else
@@ -952,9 +891,7 @@ class Analyser:
         if not isinstance(node.target, ast.Name):
             self.error(node, 'loop index must be a name')
         scope.locals[node.target.id] = ('index', start, stop)
-        self.loop_names.add(node.target.id)
         body = self.block_body(node.body, scope, node.lineno)
-        self.loop_names.discard(node.target.id)
         del scope.locals[node.target.id]
         written = [self.bound_expression(a, scope) for a in call.args]
         start_expr, stop_expr = ((None, written[0]) if len(written) == 1
@@ -1347,9 +1284,6 @@ class Analyser:
                   ast.Gt: '>', ast.GtE: '>='}.get(type(node.ops[0]))
             if op is None:
                 self.error(node, 'comparison operator not supported')
-            if self.kind == 'ff' and op in ('<', '<=', '>', '>='):
-                self.error(node, f'{op} in a clocked process is a subtractor: '
-                           'compare in a comb process and select here')
             left, right = self.context(left, right, node)
             if left.width != right.width:
                 wide = max(left.width, right.width)
@@ -1412,21 +1346,6 @@ class Analyser:
                            'operand')
             b.width = a.width
         return a, b
-
-    def is_elaboration (self, e):
-        """True if this expression is settled before the netlist exists:
-        a literal, a parameter, a constant, an open loop index, or an
-        expression built only from those."""
-        op = getattr(e, 'op', None)
-        if op == 'const':
-            return True
-        if op == 'ref':
-            name = e.value
-            return (name in self.e.constants or name in self.e.parameters
-                    or name in self.loop_names)
-        if op in ('binop', 'unop'):
-            return all(self.is_elaboration(a) for a in (e.args or []))
-        return False
 
     def binop (self, node, scope):
         op = {ast.BitAnd: '&', ast.BitOr: '|', ast.BitXor: '^', ast.Add: '+',
@@ -2302,23 +2221,6 @@ def array_expressions (func, names):
             continue
         out[target.id] = ' '.join(ast.unparse(call.args[0]).split())
     return out
-
-
-def plain_text (e):
-    """An expression as the author would read it back.
-
-    ir.render is for dumps and spells a constant value'width, which
-    is not how anyone wrote it. A message that names the line has to
-    name it the way it appears in the file.
-    """
-    if e.op == 'const':
-        return str(e.value)
-    if e.op == 'ref':
-        return str(e.value)
-    if e.op == 'binop' and len(e.args) == 2:
-        return (f'{plain_text(e.args[0])} {e.value} '
-                f'{plain_text(e.args[1])}')
-    return ir.render(e)
 
 
 def constant_expressions (func, names):
