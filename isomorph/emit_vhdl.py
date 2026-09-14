@@ -10,6 +10,7 @@ Style (IEEE numeric_std, Xilinx UG901, CNRS C_6, so-logic 2.2):
   architecture rtl; process (all) / rising_edge; no std_logic_arith;
   no buffer ports; end entity / end architecture labelled.
 """
+import re
 import textwrap
 import os
 import shutil
@@ -117,6 +118,61 @@ def wide_params (modules):
     return wide
 
 
+def used_in (name, body):
+    """Does this identifier appear in the rendered text?
+
+    The VHDL twin of the SystemVerilog check, and it has to be one:
+    a generic pruned from the entity here but kept as a parameter
+    there would give the same design two different interfaces, and a
+    mixed-language flow binds them by name.
+    """
+    word = re.compile(r'\b' + re.escape(name) + r'\b')
+    for line in body:
+        if word.search(line.split('--')[0]):
+            return True
+    return False
+
+
+def live_generics (modules, by_name, wide):
+    """The generics each entity declares, and the architecture text
+    that decided it: ({module: {names}}, {module: lines}).
+
+    The text comes back with the answer because emit_unit needs the
+    same lines and rendering an architecture is the expensive half of
+    emitting one.
+
+    A parameter that elaboration folded away -- one that only sized an
+    array or set a loop bound -- is a literal in the text by now, and
+    declaring it leaves a generic that looks overridable and changes
+    nothing. isomorph specialises a module per parameter set, so the
+    value reaches the body without the generic.
+
+    A name some instantiation overrides is kept whatever the text
+    says: the entity and its generic maps have to agree, which is the
+    rule generic_map is written to (a string against an entity with no
+    such generic is what ghdl rejected before).
+    """
+    overridden = {}
+    for m in modules:
+        for inst in m.instances:
+            overridden.setdefault(inst.module, set()).update(inst.params)
+    live = {}
+    rendered = {}
+    for m in modules:
+        if m.blackbox:
+            continue
+        keep = set(overridden.get(m.name, ()))
+        rendered[m.name] = architecture_lines(m, by_name, wide)
+        text = port_lines(m) + rendered[m.name]
+        for name, value in m.parameters.items():
+            if isinstance(value, bool) or not isinstance(value, int):
+                continue
+            if name in keep or used_in(name, text):
+                keep.add(name)
+        live[m.name] = keep
+    return live, rendered
+
+
 def emit_vhdl (modules):
     """VHDL-2008 text for the module list, leaves first.
 
@@ -134,6 +190,7 @@ def emit_vhdl (modules):
         check_names(m)
     by_name = {m.name: m for m in modules}
     wide = wide_params(modules)
+    live, built = live_generics(modules, by_name, wide)
     parts = []
     pkg = emit_package(modules)
     if pkg:
@@ -144,7 +201,8 @@ def emit_vhdl (modules):
             # the vendor's own entity handed to the tool
             continue
         parts.append(BAR_VHDL + '\n' + emit_unit(m, by_name,
-                                                 modules[-1].name, wide))
+                                                 modules[-1].name, wide,
+                                                 live, built))
     text = '\n\n'.join(parts)
     return text + ('\n' if not text.endswith('\n') else '')
 
@@ -158,6 +216,7 @@ def vhdl_files (modules):
         check_names(m)
     by_name = {m.name: m for m in modules}
     wide = wide_params(modules)
+    live, built = live_generics(modules, by_name, wide)
     top = modules[-1].name
     out = []
     pkg = emit_package(modules)
@@ -167,7 +226,7 @@ def vhdl_files (modules):
         if m.blackbox:
             continue
         out.append((m.name + '.vhd',
-                    emit_unit(m, by_name, top, wide) + '\n'))
+                    emit_unit(m, by_name, top, wide, live, built) + '\n'))
     return out
 
 
@@ -585,7 +644,8 @@ def wrap_long_lines (lines, marker, step):
             out += fold_line(tail, lead + step + step)
     return out
 
-def emit_unit (m, by_name, top_name, wide = None):
+def emit_unit (m, by_name, top_name, wide = None, live = None,
+               built = None):
     lines = []
     lines += header_lines(m)
     lines.append('library ieee;')
@@ -603,9 +663,11 @@ def emit_unit (m, by_name, top_name, wide = None):
         lines.append(f'use work.{top_name}_pkg.all;')
     lines.append('')
     wide = wide or {}
-    lines += entity_lines(m, wide.get(m.name, {}))
+    lines += entity_lines(m, wide.get(m.name, {}),
+                          (live or {}).get(m.name))
     lines.append('')
-    lines += architecture_lines(m, by_name, wide)
+    body = (built or {}).get(m.name)
+    lines += body if body is not None else architecture_lines(m, by_name, wide)
     return '\n'.join(wrap_long_lines(lines, '--', 2))
 
 
@@ -697,7 +759,7 @@ def generic_map (child, inst_params):
             if isinstance(v, int) and not isinstance(v, bool)]
 
 
-def entity_lines (m, wide = None):
+def entity_lines (m, wide = None, live = None):
     wide = wide or {}
     lines = [f'entity {m.name} is']
     gens = []
@@ -705,6 +767,8 @@ def entity_lines (m, wide = None):
         if isinstance(value, bool):
             continue
         if isinstance(value, int):
+            if live is not None and name not in live:
+                continue
             gens.append((name, value))
     if gens:
         lines.append('  generic (')
