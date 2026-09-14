@@ -1092,6 +1092,17 @@ class Analyser:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
         if value.width < width:
+            # a conditional takes its width from the context it lands
+            # in, and both tools push that context into the arms: a
+            # 13-bit target around (c ? a12 : b12) is nine WIDTHEXPAND
+            # warnings, one per arm, against a cast that is right. Widen
+            # the arms instead, where the tool is looking
+            if value.op == 'ifexp':
+                cond, a, b = value.args
+                a = self.fit(a, width, node, width_expr)
+                b = self.fit(b, width, node, width_expr)
+                return ir.Expr('ifexp', width, a.signed and b.signed,
+                               [cond, a, b])
             return ir.Expr('extend', width, value.signed, [value],
                            width_expr = width_expr)
         return value
