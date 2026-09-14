@@ -1,24 +1,27 @@
 #!/bin/sh
 # Install isomorph for this user so `from isomorph import ...` works
 # with no PYTHONPATH. Same mechanism as MyHDL: pip + site-packages.
+# Unlike MyHDL it also offers to install the external tools.
 set -eu
 
-HOME_DEST="${HOME}/isomorph"
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$HERE/pyproject.toml")
 
 usage () {
     cat <<'EOF'
-usage: install.sh [--pack] [--user] [--editable] [--deps] [--dest DIR]
+usage: install.sh [--tar] [--pack] [--user] [--editable]
+                  [--deps] [--no-deps] [--dest DIR]
 
-  default     copy a clean tree to ~/isomorph and pip-install it
-  --pack      copy to ~/isomorph only (for tarball / scp)
-  --user      force pip --user (~/.local) even if a venv/conda
-              env is writable
-  --editable  pip install -e (developers; points at the tree)
-  --deps      install the external tools too (gcc, verilator,
-              ghdl, yosys and its ghdl plugin). Needs root.
-              Without it they are only reported.
-  --dest DIR  install prefix instead of ~/isomorph
+  default     pip-install this tree, then offer the external tools
+  --tar       write isomorph-<version>.tar.gz and stop
+  --pack      copy a clean tree to ~/isomorph and stop
+  --user      force pip --user (~/.local) even if a venv or conda
+              environment is writable
+  --editable  pip install -e (developers; points at this tree)
+  --deps      install the external tools without asking. Needs root
+  --no-deps   report the external tools and never ask
+  --dest DIR  where --pack copies, default ~/isomorph, and where
+              --tar writes, default the current directory
 
 After install, the house import works:
 
@@ -28,19 +31,21 @@ After install, the house import works:
 EOF
 }
 
-PACK_ONLY=0
+MODE=install
 FORCE_USER=0
 EDITABLE=0
-WITH_DEPS=0
-DEST=$HOME_DEST
+WANT_DEPS=ask
+DEST=
 
 while [ $# -gt 0 ]; do
     case $1 in
         -h|--help) usage; exit 0 ;;
-        --pack) PACK_ONLY=1 ;;
+        --tar) MODE=tar ;;
+        --pack) MODE=pack ;;
         --user) FORCE_USER=1 ;;
         --editable) EDITABLE=1 ;;
-        --deps) WITH_DEPS=1 ;;
+        --deps) WANT_DEPS=yes ;;
+        --no-deps) WANT_DEPS=no ;;
         --dest) DEST=$2; shift ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -79,12 +84,28 @@ copy_tree () {
     chmod +x "$dst/install.sh"
 }
 
-echo "packing $HERE -> $DEST"
-copy_tree "$HERE" "$DEST"
-
-if [ "$PACK_ONLY" -eq 1 ]; then
+if [ "$MODE" = pack ]; then
+    DEST=${DEST:-$HOME/isomorph}
+    echo "packing $HERE -> $DEST"
+    copy_tree "$HERE" "$DEST"
     echo "packed $DEST"
-    echo "share with: tar czf isomorph.tar.gz -C \"\$HOME\" isomorph"
+    exit 0
+fi
+
+if [ "$MODE" = tar ]; then
+    DEST=${DEST:-$(pwd)}
+    NAME=isomorph-$VERSION
+    STAGE=$(mktemp -d)
+    trap 'rm -rf "$STAGE"' EXIT INT TERM
+    copy_tree "$HERE" "$STAGE/$NAME"
+    mkdir -p "$DEST"
+    tar czf "$DEST/$NAME.tar.gz" -C "$STAGE" "$NAME"
+    echo "wrote $DEST/$NAME.tar.gz"
+    echo
+    echo "they unpack and install with"
+    echo "    tar xzf $NAME.tar.gz"
+    echo "    cd $NAME"
+    echo "    ./install.sh"
     exit 0
 fi
 
@@ -93,22 +114,26 @@ if [ "$EDITABLE" -eq 1 ]; then
     PIP_FLAGS="$PIP_FLAGS -e"
 fi
 
-pip_install () {
-    extra=$1
-    "$PYTHON" -m pip install $PIP_FLAGS $extra "$DEST"
+pip_try () {
+    "$PYTHON" -m pip install $PIP_FLAGS "$@" "$HERE"
 }
 
-echo "installing with $PYTHON"
+echo "installing isomorph $VERSION from $HERE with $PYTHON"
 if [ "$FORCE_USER" -eq 1 ]; then
-    pip_install --user
-elif pip_install "" ; then
+    pip_try --user || pip_try --user --no-build-isolation
+elif pip_try; then
+    :
+elif pip_try --user; then
     :
 else
-    echo "retrying with --user (home site-packages)" >&2
-    pip_install --user
+    # a machine with no network cannot fetch setuptools to build with
+    echo "retrying without build isolation" >&2
+    pip_try --user --no-build-isolation
 fi
 
-"$PYTHON" - <<'PY'
+# from / so the tree we just installed from cannot answer instead of
+# site-packages
+(cd / && "$PYTHON" - ) <<'PY'
 from isomorph import (block, signal, signals, enum, always_ff,
     always_comb, assign, concat, replicate, bits, struct,
     attr, open_port, instances)
@@ -117,20 +142,32 @@ print('isomorph ok')
 print(' ', isomorph.__file__)
 PY
 
-# ------------------------------------------------------------------
-# External tools. Isomorph converts to SystemVerilog and VHDL and
-# simulates in Python with none of them installed. gcc, verilator
-# and ghdl switch on the other two simulator backends and --lint.
+# Isomorph converts to SystemVerilog and VHDL and simulates in Python
+# with none of these installed. gcc, verilator and ghdl switch on the
+# other two simulator backends and --lint.
 echo
 "$PYTHON" -m isomorph doctor || true
 
-if [ "$WITH_DEPS" -eq 1 ]; then
+COMMAND=
+if [ "$WANT_DEPS" != no ]; then
     COMMAND=$("$PYTHON" -c \
         'import isomorph.deps as d; print(d.install_command() or "")')
-    if [ -z "$COMMAND" ]; then
-        echo "nothing missing, or this platform is not one install.sh"
-        echo "knows how to advise on; install the tools by hand."
-    else
+fi
+
+if [ -n "$COMMAND" ]; then
+    RUN=$WANT_DEPS
+    if [ "$RUN" = ask ]; then
+        RUN=no
+        if [ -t 0 ]; then
+            printf '\ninstall the missing ones now?\n    %s\n[y/N] ' \
+                "$COMMAND"
+            read -r ANSWER
+            case $ANSWER in
+                y|Y|yes|YES) RUN=yes ;;
+            esac
+        fi
+    fi
+    if [ "$RUN" = yes ]; then
         echo "running: $COMMAND"
         sh -c "$COMMAND"
         echo

@@ -7,3 +7,4 @@ __pycache__/
 build/
 work-obj*.cf
 tests/cores/work/
+isomorph-*.tar.gz

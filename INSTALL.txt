@@ -1,5 +1,5 @@
-ISOMORPH - COPY AND SETUP
-=========================
+ISOMORPH - PACKAGE AND INSTALL
+==============================
 Plain text, 79 columns.
 
 After setup, Python finds isomorph the same way it finds MyHDL: pip
@@ -20,92 +20,85 @@ Python 3.11 or newer. pip. That is all.
 
     /home/<you>/.../isomorph          this repository
 
-  Share tree (clean copy, what colleagues get):
+  Archive (one file, what colleagues get):
 
-    ~/isomorph
+    isomorph-<version>.tar.gz
 
-  Do not put RTL designs inside ~/isomorph. That folder is the
-  package you copy. Keep designs in their own project directories.
+  Do not put RTL designs inside the unpacked archive. Keep designs
+  in their own project directories.
 
 
-2. MAKE THE SHARE COPY
-----------------------
+2. MAKE THE ARCHIVE
+-------------------
 From the development tree:
 
-    ./install.sh --pack
+    ./install.sh --tar
 
-That writes a clean tree to ~/isomorph:
+That writes isomorph-0.1.0.tar.gz into the current directory. It
+unpacks to a single directory isomorph-0.1.0/ holding
 
-    ~/isomorph/install.sh
-    ~/isomorph/INSTALL.txt
-    ~/isomorph/pyproject.toml
-    ~/isomorph/SPEC.txt
-    ~/isomorph/isomorph/          the Python package
+    install.sh
+    INSTALL.txt
+    pyproject.toml
+    SPEC.txt
+    isomorph/                the Python package
 
-Caches, egg-info and __pycache__ are omitted. Re-run --pack
-whenever the development tree should be re-copied.
+Caches, egg-info and __pycache__ are left out. Somewhere else:
 
-Other destinations:
+    ./install.sh --tar --dest /tmp
 
+A plain directory instead of an archive, to scp or to keep:
+
+    ./install.sh --pack                     copies to ~/isomorph
     ./install.sh --pack --dest /tmp/isomorph
 
 
 3. GIVE IT TO A COLLEAGUE
 -------------------------
-Tarball (from your home directory):
+Send them the one file:
 
-    tar czf isomorph.tar.gz -C "$HOME" isomorph
+    scp isomorph-0.1.0.tar.gz colleague:
 
-They unpack:
-
-    tar xzf isomorph.tar.gz -C "$HOME"
-
-Or copy the folder:
-
-    scp -r ~/isomorph colleague:/home/colleague/isomorph
-
-They must have the files on disk before they install. pip
-installs from that tree; it does not download isomorph from
-PyPI.
+pip installs from the unpacked tree; it does not download isomorph
+from PyPI, so they must have the file on disk before they install.
 
 
 4. INSTALL (THEY RUN THIS)
 --------------------------
-    cd ~/isomorph
+    tar xzf isomorph-0.1.0.tar.gz
+    cd isomorph-0.1.0
     ./install.sh
 
 What that does:
 
-  1. Refreshes ~/isomorph from the tree that contains install.sh
-     (a no-op if they already unpacked there).
-  2. Runs:  python3 -m pip install --upgrade ~/isomorph
-     If the active environment is not writable (no conda/venv
-     write access), it retries:
-              python3 -m pip install --upgrade --user ~/isomorph
-  3. Imports the house names and prints the installed file path.
+  1. Runs:  python3 -m pip install --upgrade .
+     If the active environment is not writable (no conda or venv
+     write access) it retries with --user, and if the machine
+     cannot reach PyPI for setuptools, once more with
+     --no-build-isolation.
+  2. Imports the house names from outside the unpacked tree and
+     prints the installed file path, so the tree sitting in the
+     current directory cannot answer for site-packages.
+  3. Reports which external tools the machine has and offers to
+     install the missing ones (section 10). That needs root, so it
+     asks first and does nothing unless the answer is yes. MyHDL
+     leaves this to you; isomorph does not.
 
 `--user` lands in ~/.local/lib/pythonX.Y/site-packages, which
 Python already searches. A writable conda or venv install lands
 next to MyHDL in that environment's site-packages.
 
-Force the home site-packages:
+    ./install.sh --deps       install the tools without asking
+    ./install.sh --no-deps    report them and never ask
+    ./install.sh --user       force the home site-packages
+    PYTHON=/path/to/python3.12 ./install.sh       a chosen one
 
-    ./install.sh --user
-
-Use a specific interpreter:
-
-    PYTHON=/path/to/python3.12 ./install.sh
-
-Developers who want the share tree to track the files on disk
-(no copy into site-packages):
+Developers who want the install to track the files on disk:
 
     ./install.sh --editable
 
-install.sh finishes by reporting which external tools this
-machine has (section 10). To install the missing ones at the
-same time, which needs root:
-
-    ./install.sh --deps
+The unpacked directory can be deleted afterwards; the package is
+in site-packages. Keep it if you want SPEC.txt to hand.
 
 
 5. CHECK
@@ -133,8 +126,8 @@ Convert:
 6. WRITE A DESIGN
 -----------------
 A design file design.py in any directory. Three parts: the block,
-an elaborate function that builds its ports, and a test bench that
-drives a simulator.
+a test bench that drives a simulator, and the main block that
+builds the ports.
 
     from isomorph import (block, signal, signals, enum, always_ff,
         always_comb, assign, concat, replicate, bits, struct,
@@ -147,25 +140,22 @@ drives a simulator.
             o_sum.next = (i_a + i_b)[WIDTH-1:0]
         return instances()
 
-    def elaborate_add2 ():
-        return add2(i_a = signal(4), i_b = signal(4),
-                    o_sum = signal(4))
-
     def test_add2 (sim):
         for a in range(16):
             for b in range(16):
                 sim.set('i_a', a)
                 sim.set('i_b', b)
-                sim.eval()
                 assert sim.get('o_sum') == (a + b) % 16
 
     if (__name__ == '__main__'):
         import sys
-        sys.exit(main(elaborate_add2, test_add2))
+        design = add2(i_a = signal(4), i_b = signal(4),
+                      o_sum = signal(4))
+        sys.exit(main(design, test_add2))
 
-elaborate_add2 is the only place the ports are built, so the test
-bench and the conversion can never drift apart. main() gives the
-file a command line:
+The ports are built in one place, so the test bench and the
+conversion can never drift apart. main() gives the file a command
+line:
 
     python3 design.py                 run the test bench (Python)
     python3 design.py --run c99       run it through gcc
@@ -187,30 +177,24 @@ Three simulators, one test bench:
 
 A design with no test bench still gets the writing half:
 
-    main(elaborate_add2)
+    main(design)
 
 7. UPDATE
 ---------
 You (maintainer): change the development tree, then
 
-    ./install.sh --pack
-    tar czf isomorph.tar.gz -C "$HOME" isomorph
+    ./install.sh --tar
 
-They: replace ~/isomorph with the new copy (or unpack over it)
-and run ./install.sh again. pip --upgrade replaces the previous
-install.
+They: unpack the new archive and run ./install.sh in it again.
+pip --upgrade replaces the previous install.
 
 
 8. UNINSTALL
 ------------
     python3 -m pip uninstall isomorph
 
-Remove the share tree if you want:
-
-    rm -rf ~/isomorph
-
-That does not uninstall the pip package by itself; run pip
-uninstall as well.
+Deleting the unpacked archive does not uninstall the package; run
+pip uninstall as well.
 
 
 9. IF IMPORT FAILS
