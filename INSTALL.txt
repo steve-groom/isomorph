@@ -99,12 +99,15 @@ What that does:
   1. Asks the python where it is willing to be written to, and
      then runs pip once. A conda or venv environment takes the
      package directly. A distribution that marks its python
-     externally managed (PEP 668: Mint, Ubuntu, Debian) gets
-     --user --break-system-packages, which writes to the home
-     site-packages and leaves the system one alone; the script
-     says so in one line rather than letting pip say it in
-     twenty. A machine that cannot reach PyPI for setuptools is
-     retried once with --no-build-isolation.
+     externally managed (PEP 668: Mint, Ubuntu, Debian) can
+     still take the package with --user --break-system-packages,
+     which writes to the home site-packages and leaves the system
+     one alone. On that kind of machine the script stops, says
+     so, recommends miniconda or a venv instead and prints the
+     three lines that install miniconda, and goes on only if you
+     answer y. --user or --deps answers for you, and so does a
+     run with no terminal. A machine that cannot reach PyPI for
+     setuptools is retried once with --no-build-isolation.
   2. Imports the house names from outside the unpacked tree and
      prints the installed file path, so the tree sitting in the
      current directory cannot answer for site-packages. If the

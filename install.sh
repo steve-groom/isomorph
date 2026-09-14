@@ -233,11 +233,41 @@ elif [ "$FORCE_USER" -eq 1 ]; then
     FLAGS="--user"
 fi
 
-echo "installing isomorph $VERSION from $HERE with $PYTHON"
 if [ "$WHERE" = managed ]; then
-    echo "this python is externally managed, so the package goes to"
-    echo "your home site-packages and the system one is left alone"
+    cat <<EOF
+
+This python is externally managed: the distribution owns it and
+pip will not add to its site-packages.
+
+    $PYTHON
+
+Isomorph can go into your home site-packages instead, which works
+and leaves the system python alone, but a conda or venv
+environment is the better answer. That is where MyHDL goes, the
+isomorph command lands on your PATH, and nothing sits beside the
+packages apt manages.
+
+Miniconda, if you want one:
+
+    curl -fsSL -o miniconda.sh \\
+        https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+    bash miniconda.sh -b -p \$HOME/miniconda3
+    \$HOME/miniconda3/bin/conda init bash
+
+Then open a new shell and run this install again.
+
+EOF
+    if [ "$FORCE_USER" -eq 0 ] && [ "$WANT_DEPS" != yes ] && [ -t 0 ]; then
+        printf 'Install into your home site-packages anyway? [y/N] '
+        read -r ANSWER
+        case $ANSWER in
+            y|Y|yes|YES) ;;
+            *) echo "nothing installed."; exit 0 ;;
+        esac
+    fi
 fi
+
+echo "installing isomorph $VERSION from $HERE with $PYTHON"
 if [ -n "$TARGET" ]; then
     mkdir -p "$TARGET"
     TARGET=$(CDPATH= cd -- "$TARGET" && pwd)
