@@ -1498,6 +1498,28 @@ def vhdl_cmp_bool (ctx, e):
     return f'{left} {vhdl_op} {right}'
 
 
+def vhdl_number (value, width, signed = False):
+    """A constant in an expression, as the number the author wrote.
+
+    Verilog has a sized decimal literal and VHDL does not, so a
+    constant used to land as a bit string: "1010101110100" is -2700,
+    and nobody reads that. numeric_std is already in scope, so say it
+    with to_signed or to_unsigned instead.
+
+    A word of one repeated bit is left as a bit string, where the bits
+    are the point and counting them is not, and so is a single bit,
+    which is a character literal in VHDL.
+    """
+    value = int(value)
+    if width == 1:
+        return "'1'" if value else "'0'"
+    if value == 0 or value == (1 << width) - 1:
+        return vhdl_bits(value, width, signed)
+    if value < 0 or signed:
+        return f'std_logic_vector(to_signed({value}, {width}))'
+    return f'std_logic_vector(to_unsigned({value}, {width}))'
+
+
 def vhdl_bits (value, width, signed = False, base = None):
     """A bit string, in hex where that is what was written and the
     width divides by four, which is how an address is read."""
@@ -1544,7 +1566,7 @@ def vhdl_expr (ctx, e, index = False):
             return str(int(e.value))
         if e.value is not None and str(e.value) in ctx.int_names:
             return str(e.value)
-        return vhdl_bits(e.value, e.width, e.signed)
+        return vhdl_number(e.value, e.width, e.signed)
     if op == 'enum':
         return e.value.name
     if op == 'bit':
@@ -1603,7 +1625,7 @@ def vhdl_expr (ctx, e, index = False):
             return f'({zeros - 1} downto 0 => \'0\') & {inner}'
         fn = 'signed' if e.signed else 'unsigned'
         size = extend_size(ctx, e, inner)
-        return (f'std_logic_vector(resize({fn}({inner}), {size}))')
+        return (f'std_logic_vector(resize({numeric(fn, inner)}, {size}))')
     if op == 'call':
         args = ', '.join(vhdl_expr(ctx, x) for x in a)
         return f'{e.value}({args})'
@@ -1644,6 +1666,26 @@ def is_int_tree (ctx, e):
     if e.op == 'binop' and e.value in ('+', '-', '*'):
         return is_int_tree(ctx, e.args[0]) and is_int_tree(ctx, e.args[1])
     return False
+
+
+def numeric (fn, inner):
+    """signed(x) or unsigned(x), less the round trip when x is already
+    that.
+
+    Every conversion here hands back a std_logic_vector, so an operand
+    that arrives already converted is wrapped straight back up again:
+    signed(std_logic_vector(-signed(i_theta))) is three conversions
+    where the middle two cancel. Reading the type off the text is
+    enough, because the text is what the reader has to follow.
+    """
+    head = f'std_logic_vector({fn}('
+    if inner.startswith(head) and inner.endswith('))'):
+        return inner[len('std_logic_vector('):-1]
+    if inner.startswith('std_logic_vector(') and inner.endswith(')'):
+        body = inner[len('std_logic_vector('):-1]
+        if body.startswith(f'-{fn}(') or body.startswith(f'{fn}('):
+            return body
+    return f'{fn}({inner})'
 
 
 def sl_literal (text, width):
