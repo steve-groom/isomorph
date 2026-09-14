@@ -49,6 +49,34 @@ class _Monitor:
             self.fn(sim)
 
 
+class Probe:
+    """Every signal of the top module by name: sim.dut.sample_flop.
+
+    Reading gives the value, assigning drives it. A name the design
+    does not have is an error naming it, rather than a typo that
+    quietly reads nothing.
+    """
+
+    def __init__ (self, sim, names):
+        object.__setattr__(self, '_sim', sim)
+        object.__setattr__(self, '_names', set(names))
+
+    def __getattr__ (self, name):
+        if name not in self._names:
+            raise SimError(f'{name} is not a signal of '
+                           f'{self._sim.top.name}')
+        return self._sim.get(name)
+
+    def __setattr__ (self, name, value):
+        if name not in self._names:
+            raise SimError(f'{name} is not a signal of '
+                           f'{self._sim.top.name}')
+        self._sim.set(name, value)
+
+    def __dir__ (self):
+        return sorted(self._names)
+
+
 class Simulator:
     """set / get / eval / tick / posedge, VCD and ndjson.
 
@@ -99,6 +127,8 @@ class Simulator:
         self._proto_events = []
         self._enum_of = {}
         self._enum_paths(self.top, '')
+        self.dut = Probe(self, [s.name for s in
+                                list(self.top.signals) + list(self.top.ports)])
         if backend == 'python':
             self._python = Executor(self.modules)
         elif backend == 'c99':
