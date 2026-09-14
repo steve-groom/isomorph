@@ -692,13 +692,16 @@ def entity_lines (m, wide = None):
         lines.append('  generic (')
         for i, (name, value) in enumerate(gens):
             semi = ';' if i < len(gens) - 1 else ''
+            before, after = m.parameter_comments.get(name, ([], None))
+            lines += comment_lines(before, 4)
             if name in wide:
                 w = wide[name]
                 lines.append(
                     f'    {name} : std_logic_vector({w - 1} downto 0) '
                     f':= {wide_literal(value, w)}{semi}')
             else:
-                lines.append(f'    {name} : integer := {value}{semi}')
+                lines += trailing_lines(
+                    f'    {name} : integer := {value}{semi}', after, 4)
         lines.append('  );')
     if m.ports:
         lines.append('  port (')

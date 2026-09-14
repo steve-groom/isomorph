@@ -849,7 +849,10 @@ def parameter_lines (m, body = None):
     lines = []
     for index, (name, value) in enumerate(kept):
         comma = ',' if index < len(kept) - 1 else ''
-        lines.append(f'    parameter {name} = {sv_number(value)}{comma}')
+        before, after = m.parameter_comments.get(name, ([], None))
+        lines += comment_lines(before, 4)
+        lines += trailing_lines(
+            f'    parameter {name} = {sv_number(value)}{comma}', after, 4)
     return lines
 
 

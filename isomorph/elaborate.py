@@ -259,7 +259,12 @@ class Elaborated:
                                   OpenPort)):
                 self.ports[name] = value
                 self.port_names.update(_port_names(name, value))
-            elif isinstance(value, (int, bool, EnumType, StructType, str)):
+            elif isinstance(value, (int, bool, float, EnumType, StructType,
+                                    str)):
+                # a float is elaboration only, like a string: no HDL has
+                # a real generic here and none is emitted. A clock rate
+                # is written 50e6 and the block divides it down to the
+                # integer that does reach the hardware
                 self.parameters[name] = value
             else:
                 raise IsomorphError(f'{self.block_name}: argument {name} is '

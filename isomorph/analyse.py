@@ -221,6 +221,17 @@ class Analyser:
                          ports, signals, dict(e.constants), dict(e.enums),
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
+        # a parameter is written in the signature beside the ports and
+        # carries its comment the same way one does
+        for name in e.parameters:
+            line = arg_lines.get(name)
+            if line is None:
+                continue
+            before = self.comments_before(
+                line, arg_lines.get('__previous__' + name, line - 1))
+            after = self.trailing(line)
+            if before or after:
+                mod.parameter_comments[name] = (before, after)
         mod.constant_exprs = constant_expressions(e.func, e.constants)
         mod.constant_bases = constant_bases(e.func, e.constants)
         written = array_expressions(e.func, e.arrays)

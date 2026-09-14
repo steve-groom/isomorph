@@ -211,6 +211,10 @@ class Module:
     # name -> (base, digits) for a constant written 0x, 0b or 0o, so
     # the HDL can be read the way the Python was
     constant_bases: dict = field(default_factory = dict)
+    # name -> (comments above it, comment after it) for a parameter,
+    # which is written in the signature like a port and reaches the
+    # HDL the same way
+    parameter_comments: dict = field(default_factory = dict)
 
 
 def render (e):
