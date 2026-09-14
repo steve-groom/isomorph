@@ -353,11 +353,11 @@ def const_macro (module_name, name):
     """One module constant or int parameter, as a C macro name.
 
     Qualified by the module for the same reason an enum member is: a
-    define is global and a module constant is not. a peripheral
-    calls the first character of its identifier ID_BYTE_0 and so does
-    one peripheral, one of them 'R' and the other 'C', and the first
-    define won. The widths still came from the right module, so
-    one peripheral's VERSION of 1 was read as its neighbour's 2 masked
+    define is global and a module constant is not. Two peripherals in
+    one design each called the first character of their identifier
+    ID_BYTE_0, one of them 'R' and the other 'C', and the first define
+    won. The widths still came from the right module, so the second
+    one's VERSION of 1 was read as its neighbour's 2 masked
     to one bit, which is 0. Nothing failed to compile and only the C99
     backend was wrong."""
     return f'{module_name}__{name}'

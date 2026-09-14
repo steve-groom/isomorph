@@ -594,8 +594,8 @@ def _default_clock (domains, modules):
     It has to be a clock of the top block. This used to walk every
     module in the hierarchy, leaves first, and take the first flop's
     clock it found, which in any design with a clocked child is the
-    child's port name: a cpu_core whose own clock is i_clock0 took
-    i_clock from the a multiply step inside it. Nothing raised, because a
+    child's port name: a processor whose own clock is i_clock0 took
+    i_clock from the multiplier inside it. Nothing raised, because a
     period registered under a name no top-level clock has still falls
     back to the default period, so add_clock kept working and only
     something that had to match the name up with a real clock - the
