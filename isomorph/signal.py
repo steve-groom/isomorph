@@ -569,9 +569,14 @@ def always_ff_async_reset (*edges, reason = None):
     a reset synchroniser, which has no running clock to sample the
     release on, and a pointer or flag crossing in a dual-clock FIFO.
 
-    Every use is a severe warning at conversion, naming the process,
-    the reset and the reason, and the reason is emitted as a comment
-    above the process in both languages.
+    reason is compulsory. Every use is announced as a warning at
+    conversion, naming the process, the reset and the reason, and the
+    reason is emitted as a comment above the process in both
+    languages. It is not severe: the construct refuses to build
+    without a justification, so every one that converts is a circuit
+    whose author has already said why, and reporting that as a fault
+    on every run would only teach the reader to skip the word where
+    it means a latch.
     """
     if len(edges) != 2 or not all(isinstance(e, Edge) for e in edges):
         raise IsomorphError(

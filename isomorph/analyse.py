@@ -712,9 +712,14 @@ class Analyser:
             reset = self.name_of(proc.reset)
             self.read.add(reset)
             self.check_async_reset(body, reset, proc)
+            # the construct will not build without a reason, so every
+            # one of these is a circuit whose author has already said
+            # why it is right. Announcing it is useful; calling it
+            # severe on every run only teaches the reader to skip the
+            # word where it means a latch
             self.warnings.append(
-                'severe: ' + proc.name + ': asynchronous reset on '
-                + reset + ' (' + (proc.reason or '') + ')')
+                proc.name + ': asynchronous reset on ' + reset
+                + ' (' + proc.reason + ')')
         return ir.Process(proc.name, proc.kind,
                           self.name_of(proc.clock) if proc.clock else None,
                           proc.polarity, body, dict(proc.attributes),
@@ -2150,12 +2155,11 @@ def fatal_warnings (warnings):
     in silicon, which is the MyHDL wound this project is a reaction to.
     A loop settles in no simulator and builds in no fitter.
 
-    An asynchronous reset is severe and is deliberately not fatal.
-    always_ff_async_reset is the construct you have to call out on
-    purpose, and its warning carries the reason you gave into the
-    emitted HDL. Making it stop the run would mean the only way to
-    write a reset synchroniser is a flag that also switches off the
-    other two checks."""
+    An asynchronous reset is neither. always_ff_async_reset is the
+    construct you have to call out on purpose, it will not compile
+    without a reason, and that reason reaches the emitted HDL. It is
+    announced as a warning, so that severe still means a design that
+    cannot be built when the reader sees it."""
     out = []
     for w in warnings:
         if 'severe:' not in w:
