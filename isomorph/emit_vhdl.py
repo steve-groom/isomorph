@@ -721,18 +721,23 @@ def architecture_lines (m, by_name, wide = None):
     lines += enum_decl_lines(m)
     lines += signal_lines(m)
     lines += attribute_lines(m)
-    lines += function_decl_lines(ctx)
+    functions = function_decl_lines(ctx)
+    lines += functions
     lines += component_lines(ctx)
-    lines.append('  function to_sl (value : boolean) return std_logic is')
-    lines.append('  begin')
-    lines.append("    if value then")
-    lines.append("      return '1';")
-    lines.append('    end if;')
-    lines.append("    return '0';")
-    lines.append('  end function to_sl;')
-    lines.append('')
-    lines.append('begin')
+    # a comparison is a boolean in VHDL and a std_logic here, so an
+    # architecture that compares anything needs the conversion. One
+    # that does not was carrying a function nobody called
     body = item_lines(ctx)
+    if any('to_sl(' in line for line in functions + body):
+        lines.append('  function to_sl (value : boolean) return std_logic is')
+        lines.append('  begin')
+        lines.append("    if value then")
+        lines.append("      return '1';")
+        lines.append('    end if;')
+        lines.append("    return '0';")
+        lines.append('  end function to_sl;')
+        lines.append('')
+    lines.append('begin')
     if body:
         lines += body
     else:
