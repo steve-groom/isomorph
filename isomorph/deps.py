@@ -255,7 +255,10 @@ def install (rows = None, ask = True, stream = None):
         try:
             answer = input()
         except EOFError:
-            answer = ''
+            # a terminal that cannot be read from is not a no
+            stream.write('\n  Nothing was installed: no answer could be '
+                         'read.\n')
+            return 1
         if answer.strip().lower() not in ('y', 'yes'):
             stream.write('  Nothing installed.\n')
             return 0

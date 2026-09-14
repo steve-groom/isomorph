@@ -206,13 +206,38 @@ pip_try () {
     "$PYTHON" -m pip install $PIP_FLAGS "$@" "$HERE"
 }
 
-# --break-system-packages is for the distributions that mark their
-# python externally managed, Mint and Ubuntu among them; with --user
-# it writes to the home site-packages and never the system one.
-# --no-build-isolation is for a machine that cannot reach PyPI for
-# setuptools
+# Ask where this python will let us write before asking pip to do
+# it. Mint and Ubuntu mark theirs externally managed (PEP 668) and
+# refuse a system install; discovering that by trying costs the
+# reader two screens of error for something we can just read
+WHERE=$("$PYTHON" - <<'PY'
+import os
+import sys
+import sysconfig
+
+conda = os.environ.get('CONDA_PREFIX')
+if sys.prefix != sys.base_prefix or (conda and sys.prefix == conda):
+    print('env')
+elif os.path.exists(os.path.join(sysconfig.get_path('stdlib'),
+                                 'EXTERNALLY-MANAGED')):
+    print('managed')
+else:
+    print('system')
+PY
+)
+
+FLAGS=
+if [ "$WHERE" = managed ]; then
+    FLAGS="--user --break-system-packages"
+elif [ "$FORCE_USER" -eq 1 ]; then
+    FLAGS="--user"
+fi
 
 echo "installing isomorph $VERSION from $HERE with $PYTHON"
+if [ "$WHERE" = managed ]; then
+    echo "this python is externally managed, so the package goes to"
+    echo "your home site-packages and the system one is left alone"
+fi
 if [ -n "$TARGET" ]; then
     mkdir -p "$TARGET"
     TARGET=$(CDPATH= cd -- "$TARGET" && pwd)
@@ -237,19 +262,16 @@ print(path)
 PY
 )
     echo "found by: $PTH"
-elif [ "$FORCE_USER" -eq 1 ]; then
-    pip_try --user \
-        || pip_try --user --break-system-packages \
-        || pip_try --user --break-system-packages --no-build-isolation
+elif [ -n "$FLAGS" ]; then
+    # a machine with no network cannot fetch setuptools to build with
+    pip_try $FLAGS || pip_try $FLAGS --no-build-isolation
 elif pip_try; then
     :
 elif pip_try --user; then
     :
-elif pip_try --user --break-system-packages; then
-    :
 else
     echo "retrying without build isolation" >&2
-    pip_try --user --break-system-packages --no-build-isolation
+    pip_try --user --no-build-isolation
 fi
 
 # from / so the tree we just installed from cannot answer instead of
@@ -266,6 +288,21 @@ try:
     print('  myhdl   ', myhdl.__file__)
 except ImportError:
     pass
+
+import os
+import shutil
+import sysconfig
+
+if shutil.which('isomorph') is None:
+    for scripts in (sysconfig.get_path('scripts', 'posix_user'),
+                    sysconfig.get_path('scripts')):
+        if os.path.exists(os.path.join(scripts, 'isomorph')):
+            print()
+            print(f'  the isomorph command is in {scripts},')
+            print('  which is not on this PATH. python3 -m isomorph')
+            print('  works anyway, and on Debian and its family a new')
+            print('  login adds that directory now that it exists.')
+            break
 PY
 
 # Isomorph converts to SystemVerilog and VHDL and simulates in Python
