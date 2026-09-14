@@ -25,7 +25,10 @@ def min_width (value):
 
 BAR_SV = '//' + '-' * 77
 
-HOUSE_LIMIT = 79
+# SystemVerilog wraps at 100, which is what the lowRISC guide asks
+# for and what OpenTitan and everything derived from it uses. 79 is
+# the Python convention, kept for the Python; no HDL guide asks for it
+HOUSE_LIMIT = 100
 
 
 def fit_comment (line, indent, marker):
@@ -1332,12 +1335,12 @@ def sv_expr (e, index = False):
                 # STAGES-1 and i-1 are elaboration arithmetic: an
                 # index, not a vector, and a sized literal in one is
                 # the WIDTHEXPAND verilator reports
-                return f'{sv_expr(a[0])}[{bound_text(idx_e)}]'
+                return f'{sv_expr(a[0])}[{bound_text(idx_e, False)}]'
             return f'{sv_expr(a[0])}[{sv_expr(idx_e)}]'
         if idx_e.op == 'const':
             idx = sv_expr(idx_e, index = True)
         elif idx_e.op in ('binop', 'ref'):
-            idx = bound_text(idx_e)
+            idx = bound_text(idx_e, wrap = False)
         else:
             idx = sv_expr(idx_e)
             need = max(1, (a[0].width - 1).bit_length())
@@ -1353,15 +1356,15 @@ def sv_expr (e, index = False):
                            'field', 'concat', 'replicate'):
             lo = e.value[1]
             if lo:
-                return f"{e.width}'({sv_expr(base)} >> {lo})"
+                return f"{e.width}'({unwrapped(sv_expr(base))} >> {lo})"
             if len(a) >= 3 and a[2].op == 'const' and a[2].value == 0:
                 size = cast_size(a[1])
                 if size is not None:
-                    return f"{size}'({sv_expr(base)})"
-            return f"{e.width}'({sv_expr(base)})"
+                    return f"{size}'({unwrapped(sv_expr(base))})"
+            return f"{e.width}'({unwrapped(sv_expr(base))})"
         if len(a) >= 3:
-            hi = bound_text(a[1])
-            lo = bound_text(a[2])
+            hi = bound_text(a[1], wrap = False)
+            lo = bound_text(a[2], wrap = False)
             return f'{sv_expr(base)}[{hi}:{lo}]'
         hi, lo = e.value[0] - 1, e.value[1]
         return f'{sv_expr(base)}[{hi}:{lo}]'
@@ -1397,8 +1400,10 @@ def sv_expr (e, index = False):
             # a slice bound is written without sized literals, and a
             # nested one has to keep its brackets: (STAGES-1)*WIDTHD
             # is not STAGES-1*WIDTHD
+            # a bound is written WIDTH-1, the way every range in
+            # either language is written, and not WIDTH - 1
             outer = INDEX_PRECEDENCE.get(token, 0)
-            return (f'{sv_index_operand(a[0], outer)} {token} '
+            return (f'{sv_index_operand(a[0], outer)}{token}'
                     f'{sv_index_operand(a[1], outer, True)}')
         if token in ('<<', '>>', '>>>'):
             # a shift amount is self-determined, so it is a count and
@@ -1525,16 +1530,33 @@ def array_size (s, m):
     return text or str(s.array)
 
 
-def bound_text (e):
-    """Slice/bit bound: names and arithmetic as written, no sized literals."""
-    if e.op in ('binop',):
-        return f'({sv_expr(e, index = True)})'
-    return sv_expr(e, index = True)
+def bound_text (e, wrap = True):
+    """Slice/bit bound: names and arithmetic as written, no sized
+    literals.
+
+    Inside [hi:lo] or [i] the brackets and the colon delimit it, and
+    [WIDTH-1:0] is how every range in the language is written. A
+    replication count has no such delimiter, so {(N-1)*W{x}} keeps
+    its brackets or it is a different expression.
+    """
+    text = sv_expr(e, index = True)
+    if wrap and e.op == 'binop':
+        return f'({text})'
+    return text
 
 
 def cond_text (e):
     """Condition in if/case/assert: drop one layer of wrapping parens."""
-    text = sv_expr(e)
+    return unwrapped(sv_expr(e))
+
+
+def unwrapped (text):
+    """One layer of brackets off, where the whole text is inside it.
+
+    size'(expr) brackets what it casts and every binop renders itself
+    bracketed, so a cast of one came out WIDTH\'((a + b)). The pair
+    that says what the cast applies to is the one that stays.
+    """
     if text.startswith('(') and text.endswith(')'):
         depth = 0
         for i, ch in enumerate(text):

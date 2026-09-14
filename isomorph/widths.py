@@ -67,8 +67,12 @@ def _width_text (node, outer = 0, lang = 'sv'):
             text = f'({text} {compare} {part} ? {text} : {part})'
         return text
     symbol, precedence = _WIDTH_OPS[type(node.op)]
+    # VSG's whitespace_011 wants a space each side of an operator in
+    # VHDL and is on by default; lowRISC lets SystemVerilog write a
+    # range compactly, which is how every range in it is written
+    gap = ' ' if lang == 'vhdl' else ''
     text = (_width_text(node.left, precedence, lang)
-            + symbol
+            + gap + symbol + gap
             + _width_text(node.right, precedence + 1, lang))
     return f'({text})' if precedence < outer else text
 

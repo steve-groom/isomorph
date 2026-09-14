@@ -59,7 +59,13 @@ def wide_literal (value, width):
 
 BAR_VHDL = '--' + '-' * 77
 
-HOUSE_LIMIT = 79
+# VHDL wraps at 120, the default of VSG's length_001; ALSE allows 132.
+# At 79 the language is verbose enough that a resize inside a resize
+# breaks inside its own argument list, which is the one place a wrap
+# helps nobody. Indentation stays at two, which is what VSG's own
+# styles use and what the nesting of entity, architecture, process
+# and case wants
+HOUSE_LIMIT = 120
 
 
 def fit_comment (line, indent, marker):
@@ -953,6 +959,12 @@ class Context:
         self.wide_all = wide or {}
         self.wide = self.wide_all.get(module.name, {})
         self.var_map = {}
+        # where each name is declared, so a process lists its variables
+        # and its writebacks in the order the reader already knows
+        self.declared_at = {}
+        declared = list(module.ports) + list(module.signals)
+        for index, item in enumerate(declared):
+            self.declared_at.setdefault(item.name, index)
         self.in_function = False
         self.int_names = set()
         # a constant or a generic that will not fit an integer is a
@@ -1164,6 +1176,8 @@ def process_lines (ctx, p):
         return lines
     # Combinational: variables so later reads see earlier writes (4.4 / 6).
     driven = [n for n in assigned_roots(p.body) if n in ctx.sig_width]
+    driven.sort(key = lambda n: ctx.declared_at.get(n, len(ctx.declared_at)))
+    needs_seed = seeded(p.body)
     lines.append(f'  {p.name} : process (all) is')
     var_map = {}
     for name in driven:
@@ -1192,7 +1206,8 @@ def process_lines (ctx, p):
         lines.append(f'    variable {vname} : {typ};')
     lines.append('  begin')
     for name in driven:
-        lines.append(f'    {var_map[name]} := {name};')
+        if name in needs_seed:
+            lines.append(f'    {var_map[name]} := {name};')
     saved = ctx.var_map
     ctx.var_map = var_map
     ctx.in_function = False
@@ -1473,6 +1488,9 @@ def vhdl_expr (ctx, e, index = False):
         return vhdl_replicate(ctx, e)
     if op == 'binop':
         if index:
+            # VSG whitespace_011 is on by default and wants a space
+            # each side of + - * / **, with no exception for a range,
+            # where lowRISC lets SystemVerilog write [WIDTH-1:0]
             outer = INDEX_PRECEDENCE.get(e.value, 0)
             return (f'{vhdl_index_operand(ctx, a[0], outer)} {e.value} '
                     f'{vhdl_index_operand(ctx, a[1], outer, True)}')
@@ -1508,7 +1526,8 @@ def vhdl_expr (ctx, e, index = False):
                 return f"'0' & {inner}"
             return f'({zeros - 1} downto 0 => \'0\') & {inner}'
         fn = 'signed' if e.signed else 'unsigned'
-        return (f'std_logic_vector(resize({fn}({inner}), {e.width}))')
+        size = extend_size(ctx, e, inner)
+        return (f'std_logic_vector(resize({fn}({inner}), {size}))')
     if op == 'call':
         args = ', '.join(vhdl_expr(ctx, x) for x in a)
         return f'{e.value}({args})'
@@ -1571,13 +1590,19 @@ def vhdl_binop (ctx, e):
         vop = {'&': 'and', '|': 'or', '^': 'xor'}[op]
         return f'({vhdl_expr(ctx, a)} {vop} {vhdl_expr(ctx, b)})'
     if op in ('+', '-'):
-        left = f'resize({as_unsigned(ctx, a)}, {w})'
-        right = f'resize({as_unsigned(ctx, b)}, {w})'
+        size = operand_size(ctx, (a, b), w)
+        left = f'resize({as_unsigned(ctx, a)}, {size})'
+        right = f'resize({as_unsigned(ctx, b)}, {size})'
         return f'std_logic_vector({left} {op} {right})'
     if op == '*':
         left = as_unsigned(ctx, a)
         right = as_unsigned(ctx, b)
-        return f'std_logic_vector(resize({left} * {right}, {w}))'
+        if w == a.width + b.width:
+            # numeric_std multiplies to the sum of the lengths, which
+            # is what this is, so resizing it to itself says nothing
+            return f'std_logic_vector({left} * {right})'
+        return (f'std_logic_vector(resize({left} * {right}, '
+                f'{operand_size(ctx, (a, b), w)}))')
     if op in ('<<', '>>'):
         fn = 'shift_left' if op == '<<' else 'shift_right'
         if b.op == 'const' or (b.op == 'ref' and b.value in ctx.int_names):
@@ -1639,6 +1664,116 @@ def vhdl_bit (ctx, e):
     if idx.op == 'binop':
         return f'{base_t}({vhdl_index(ctx, idx)})'
     return f'{base_t}(to_integer({as_unsigned(ctx, idx)}))'
+
+
+def seeded (body):
+    """The driven signals whose variable has to start from the signal.
+
+    A variable stands in for a signal so a later read sees an earlier
+    write. It only has to be given the signal's value if something in
+    the process wants that value: a read, or a write to part of it.
+    Where the first thing the process does is assign the whole signal,
+    the seeding line is dead, and six dead lines at the top of a
+    process is most of what makes the emitted VHDL hard to read.
+
+    Anything nested in a branch counts as wanting the old value, since
+    the other path does not write it here.
+    """
+    first = {}
+
+    def note (name, kind):
+        if name and name not in first:
+            first[name] = kind
+
+    def reads (e):
+        if e is None or not hasattr(e, 'op'):
+            return
+        if e.op == 'ref':
+            note(str(e.value).split('[')[0], 'read')
+        for arg in (e.args or []):
+            reads(arg)
+
+    def walk (stmts, top):
+        for s in stmts or []:
+            if isinstance(s, ir.Assign):
+                reads(s.value)
+                target = s.target
+                whole = target.op == 'ref'
+                while target.op in ('slice', 'bit', 'part', 'part_down',
+                                    'field'):
+                    for arg in target.args[1:]:
+                        reads(arg)
+                    target = target.args[0]
+                if target.op == 'ref':
+                    note(str(target.value).split('[')[0],
+                         'write' if (whole and top) else 'read')
+            elif isinstance(s, ir.If):
+                for cond, inner in s.branches:
+                    reads(cond)
+                    walk(inner, False)
+            elif isinstance(s, ir.Match):
+                reads(s.subject)
+                for _, inner in s.arms:
+                    walk(inner, False)
+            elif isinstance(s, ir.For):
+                walk(s.body, False)
+            elif isinstance(s, ir.Assert):
+                reads(s.cond)
+
+    walk(body, True)
+    return {n for n, kind in first.items() if kind != 'write'}
+
+
+def operand_size (ctx, nodes, target):
+    """A width an entity can follow: x'length says what the thing
+    already is, whatever generic decided it, and widening an operand
+    so an add has somewhere to carry has no other name for it."""
+    for node in sorted(nodes, key = lambda n: -n.width):
+        named = node
+        # .signed() is a reading of the same wires, not another value
+        while named.op in ('signed', 'unsigned') and named.args:
+            named = named.args[0]
+        if named.op != 'ref':
+            continue
+        # only where the name's own declared width is the width this
+        # node has. A generic normalised to a vector carries the width
+        # of its value, so WORD'length is 32 whatever 0xC0FFEE needs
+        if ctx.sig_width.get(named.value) != named.width:
+            continue
+        text = vhdl_expr(ctx, named)
+        if not text.isidentifier() or target < named.width:
+            continue
+        grown = target - named.width
+        return f"{text}'length + {grown}" if grown else f"{text}'length"
+    return str(target)
+
+
+def extend_size (ctx, e, inner):
+    """How wide the widening goes, as the author wrote it.
+
+    The SystemVerilog half of this has read width_expr since stage 3
+    of the parameters work and the VHDL half never did, so an entity
+    with a generic resized to the number this build elaborated with:
+    resize(unsigned(x), 17) where the target is WIDTHH downto 0. One
+    override and the lengths do not match.
+
+    Widening an operand so an add has somewhere to carry has no target
+    to name, and VHDL has its own word for that: x'length says what
+    the thing already is, whatever generic decided it.
+    """
+    scope = {**ctx.m.parameters, **ctx.m.constants}
+    text = constant_expression(e.width_expr, e.width, scope, 'vhdl')
+    if text:
+        return text
+    node = e.args[0]
+    if (inner.isidentifier() and node.op == 'ref'
+            and ctx.sig_width.get(node.value) == node.width):
+        grown = e.width - node.width
+        if grown > 0:
+            return f"{inner}'length + {grown}"
+        if grown == 0:
+            return f"{inner}'length"
+    return str(e.width)
 
 
 def vhdl_cast_size (ctx, e):
