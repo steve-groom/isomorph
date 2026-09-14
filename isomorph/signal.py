@@ -289,6 +289,7 @@ class SignalArray(list):
     """signals(N, W): N signals of W bits, one array port or memory."""
 
     init = None                 # contents at power-on, from preload()
+    init_base = None            # and the base they are written in
 
     def __init__ (self, count, width):
         super().__init__(Signal(width, kind = 'bit' if width == 1
@@ -351,7 +352,7 @@ def array_view (elements):
     return view
 
 
-def preload (array, values):
+def preload (array, values, base = 'dec'):
     """The contents a memory holds when the device is configured.
 
     This is not the power-on value that signal() used to take and no
@@ -367,6 +368,14 @@ def preload (array, values):
 
         rom = signals(1024, 32)
         preload(rom, [instruction(n) for n in range(1024)])
+
+    `base` is how the words are written in the emitted HDL, and it is
+    the author who knows: a program is read in hex and a sine table in
+    decimal, and neither is readable as the other. It is 'dec', 'hex'
+    or 'bin', and it reaches both languages the same way a constant's
+    base already does.
+
+        preload(rom, contents(IMAGE, WORDS), base = 'hex')
     """
     if not isinstance(array, SignalArray):
         raise IsomorphError('preload() takes a signals() array, not '
@@ -383,7 +392,11 @@ def preload (array, values):
             raise IsomorphError(
                 f'preload(): {value} at index {index} does not fit in '
                 f'{array.width} bits')
+    if base not in ('dec', 'hex', 'bin'):
+        raise IsomorphError(f"preload(): base is 'dec', 'hex' or 'bin', "
+                            f'not {base!r}')
     array.init = values
+    array.init_base = base
     return array
 
 

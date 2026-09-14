@@ -420,11 +420,11 @@ def array_init_vhdl (s):
     every FPGA tool reads it."""
     if (len(set(s.init)) == 1 and len(s.init) > 1):
         return ' := (others => ' + uniform_word(s.init[0], s.width) + ')'
-    items = ', '.join(table_word(v, s.width) for v in s.init)
+    items = ', '.join(table_word(v, s.width, s.init_base) for v in s.init)
     return ' := (' + items + ')'
 
 
-def table_word (value, width):
+def table_word (value, width, base = None):
     """One word of a memory image, as the number it is.
 
     SystemVerilog has said 20'd915 all along and VHDL said
@@ -433,13 +433,22 @@ def table_word (value, width):
     and it is legal at any width, not just a multiple of four the way
     the hex form used to be written here.
 
-    A negative word goes back to bits: a decimal bit string is
-    unsigned, so the alternative is the two's complement spelled as a
-    large positive number, which says less than the bits do.
+    The base is the one preload() was given, because a program is
+    read in hex and a sine table in decimal and neither is readable as
+    the other.
+
+    A negative word goes back to bits whatever the base: a decimal or
+    hex bit string is unsigned, so the alternative is the two's
+    complement spelled as a large positive number, which says less
+    than the bits do.
     """
     value = int(value)
     if value < 0:
         return bit_string(value, width)
+    if base == 'bin':
+        return bit_string(value, width)
+    if base == 'hex':
+        return f'{width}x"{value:0{-(-width // 4)}X}"'
     return f'{width}d"{value}"'
 
 

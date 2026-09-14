@@ -196,7 +196,9 @@ class Analyser:
                                   width_expr = getattr(a, 'width_expr',
                                                        None),
                                   array_expr = getattr(a, 'count_expr',
-                                                       None)))
+                                                       None),
+                                  init_base = getattr(a, 'init_base',
+                                                      None)))
         signals.sort(key = lambda s: s.line)
         previous = e.func.__code__.co_firstlineno
         by_name = {}

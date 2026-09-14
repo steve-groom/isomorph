@@ -113,6 +113,8 @@ class Sig:
     width_expr: str = None
     # and how the element count was written, for an array
     array_expr: str = None
+    # the base a memory image is written in, from preload()
+    init_base: str = None
 
 
 @dataclass

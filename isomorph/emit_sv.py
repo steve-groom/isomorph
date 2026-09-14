@@ -979,9 +979,28 @@ def array_init_sv (s):
     with."""
     if (len(set(s.init)) == 1 and len(s.init) > 1):
         # a thousand copies of the same word says it once
-        return " = '{default: " + sv_const(s.init[0], s.width) + '}'
-    items = ', '.join(sv_const(v, s.width) for v in s.init)
+        return (" = '{default: "
+                + table_word_sv(s.init[0], s.width, s.init_base) + '}')
+    items = ', '.join(table_word_sv(v, s.width, s.init_base)
+                      for v in s.init)
     return " = '{" + items + '}'
+
+
+def table_word_sv (value, width, base = None):
+    """One word of a memory image, in the base preload() was given.
+
+    A program is read in hex and a sine table in decimal, and the
+    author is the one who knows which. The VHDL says the same word
+    the same way.
+    """
+    value = int(value)
+    if value < 0:
+        return sv_const(value, width)
+    if base == 'bin':
+        return f"{width}'b{value:0{width}b}"
+    if base == 'hex':
+        return f"{width}'h{value:0{-(-width // 4)}X}"
+    return f"{width}'d{value}"
 
 
 def function_lines (m):
