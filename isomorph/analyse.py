@@ -222,6 +222,7 @@ class Analyser:
                          list(self.functions.values()), processes, assigns,
                          instances, self.file, header_comment(e.func))
         mod.constant_exprs = constant_expressions(e.func, e.constants)
+        mod.constant_bases = constant_bases(e.func, e.constants)
         written = array_expressions(e.func, e.arrays)
         for sig in mod.signals:
             if sig.array and sig.name in written:
@@ -707,6 +708,8 @@ class Analyser:
         if proc.kind == 'comb':
             self.check_complete(body, proc.name, proc)
             self.check_rbw(body, set(self.assigned_here), proc)
+        if proc.kind == 'ff':
+            self.check_shared_arithmetic(body, proc)
         reset = None
         if getattr(proc, 'reset', None) is not None:
             reset = self.name_of(proc.reset)
@@ -726,6 +729,59 @@ class Analyser:
                           proc.line, [], reset,
                           getattr(proc, 'reset_polarity', 'pos'),
                           getattr(proc, 'reason', None))
+
+    def check_shared_arithmetic (self, body, proc):
+        """One adder built twice in one clocked process.
+
+        HOUSE_STYLE asks for arithmetic next values to be precalculated
+        in comb, and the cost it is about is an adder per branch: one
+        continuous calculation that every branch selects from is one
+        adder where writing it out each time is several. A single
+        increment in a single branch is one adder either way, and
+        moving it buys a named wire and nothing else, so only the
+        repeat is worth saying anything about.
+        """
+        counted = {}
+        self.count_arithmetic(body, counted)
+        for text, times in sorted(counted.items()):
+            if times > 1:
+                self.warnings.append(
+                    f'{proc.name}: {text} is built {times} times in one '
+                    'clocked process. Calculate it once in a comb '
+                    'process and select the result here, so the fitter '
+                    'shares one adder rather than building one per '
+                    'branch.')
+
+    def count_arithmetic (self, body, counted):
+        """How many times each + - * expression is written out."""
+        for s in body or []:
+            if isinstance(s, ir.Assign):
+                self.count_in_expr(s.value, counted)
+                self.count_in_expr(s.target, counted)
+            elif isinstance(s, ir.If):
+                for cond, inner in s.branches:
+                    self.count_in_expr(cond, counted)
+                    self.count_arithmetic(inner, counted)
+            elif isinstance(s, ir.Match):
+                self.count_in_expr(s.subject, counted)
+                for _, inner in s.arms:
+                    self.count_arithmetic(inner, counted)
+            elif isinstance(s, ir.For):
+                self.count_arithmetic(s.body, counted)
+            elif isinstance(s, ir.Assert):
+                self.count_in_expr(s.cond, counted)
+
+    def count_in_expr (self, e, counted):
+        if e is None or not hasattr(e, 'op'):
+            return
+        if e.op == 'binop' and e.value in ('+', '-', '*'):
+            # a bound settled before the netlist exists is not an adder
+            left, right = e.args[0], e.args[1]
+            if not (self.is_elaboration(left) and self.is_elaboration(right)):
+                text = plain_text(e)
+                counted[text] = counted.get(text, 0) + 1
+        for arg in (e.args or []):
+            self.count_in_expr(arg, counted)
 
     def check_async_reset (self, body, reset, proc):
         """The body of an asynchronous-reset flop is exactly one if/else
@@ -1254,9 +1310,6 @@ class Analyser:
                 if operand.op == 'const':
                     v = -operand.value
                     return ir.Expr('const', min_width(v), v < 0, value = v)
-                if self.kind == 'ff':
-                    self.error(node, '- in a clocked process: negate in a '
-                               'comb process and select here')
                 return ir.Expr('unop', operand.width, True, [operand], '-')
             self.error(node, 'unary operator not supported')
         if isinstance(node, ast.BinOp):
@@ -1361,14 +1414,6 @@ class Analyser:
             self.error(node, 'operator not supported in hardware')
         left = self.expression(node.left, scope)
         right = self.expression(node.right, scope)
-        if self.kind == 'ff' and op in ('+', '-', '*'):
-            # index arithmetic on parameters, constants and unrolled loop
-            # variables is settled before the netlist exists: regs[i-1]
-            # in a shift register is wiring, not an adder.
-            if not (self.is_elaboration(left) and self.is_elaboration(right)):
-                self.error(node, f'{op} in a clocked process: arithmetic '
-                           'belongs in a comb process that this one selects '
-                           'from')
         if op in ('<<', '>>'):
             return ir.Expr('binop', left.width, left.signed, [left, right], op)
         if left.op == 'const' and right.op == 'const':
@@ -2228,6 +2273,23 @@ def array_expressions (func, names):
     return out
 
 
+def plain_text (e):
+    """An expression as the author would read it back.
+
+    ir.render is for dumps and spells a constant value'width, which
+    is not how anyone wrote it. A message that names the line has to
+    name it the way it appears in the file.
+    """
+    if e.op == 'const':
+        return str(e.value)
+    if e.op == 'ref':
+        return str(e.value)
+    if e.op == 'binop' and len(e.args) == 2:
+        return (f'{plain_text(e.args[0])} {e.value} '
+                f'{plain_text(e.args[1])}')
+    return ir.render(e)
+
+
 def constant_expressions (func, names):
     """The source text of each constant a block assigns at its top level.
 
@@ -2264,6 +2326,41 @@ def constant_expressions (func, names):
         text = ast.get_source_segment(source, stmt.value)
         if text:
             out[name] = ' '.join(text.split())
+    return out
+
+
+BASE_PREFIX = {'0x': 'hex', '0b': 'bin', '0o': 'oct'}
+
+
+def constant_bases (func, names):
+    """How each plain-number constant was written: 0xdead is dead.
+
+    constant_expressions carries an expression because the names in
+    it matter. A bare literal has no names, so it fell through to the
+    value and 0xdead reached the HDL as 57005. The base is the rest
+    of what the author said about it.
+    """
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError, ValueError):
+        return {}
+    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+        return {}
+    out = {}
+    for stmt in tree.body[0].body:
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        if not (isinstance(target, ast.Name) and target.id in names
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, int)
+                and not isinstance(stmt.value.value, bool)):
+            continue
+        text = (ast.get_source_segment(source, stmt.value) or '').strip()
+        base = BASE_PREFIX.get(text[:2].lower())
+        if base:
+            out[target.id] = (base, text[2:].replace('_', ''))
     return out
 
 

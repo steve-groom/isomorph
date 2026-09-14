@@ -65,6 +65,31 @@ def sv_param (value):
     return sv_number(value)
 
 
+SV_BASE = {'hex': 'h', 'bin': 'b', 'oct': 'o'}
+
+
+def sv_base_number (written, value):
+    """A constant in the base its author wrote it in, or None.
+
+    Unsized, for the reason sv_number gives: a localparam that lands
+    in an index has to stay integer arithmetic. Only the spelling
+    changes, and the value is checked against the digits so a source
+    line nobody can read back cannot rename a number.
+    """
+    if not written:
+        return None
+    base, digits = written
+    letter = SV_BASE.get(base)
+    if not letter or not digits:
+        return None
+    try:
+        if int(digits, {'hex': 16, 'bin': 2, 'oct': 8}[base]) != int(value):
+            return None
+    except ValueError:
+        return None
+    return f"'{letter}{digits}"
+
+
 def sv_number (value):
     """A parameter or localparam value.
 
@@ -842,6 +867,8 @@ def localparam_lines (m, body = None):
         if body is not None and not used_in(name, body):
             continue
         text = constant_expression(m.constant_exprs.get(name), value, scope)
+        if not text:
+            text = sv_base_number(m.constant_bases.get(name), value)
         lines.append(f'    localparam {name} = '
                      f'{text if text else sv_number(value)};')
         scope[name] = value

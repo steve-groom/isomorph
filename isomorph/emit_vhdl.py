@@ -854,6 +854,8 @@ def constant_lines (m):
         else:
             text = constant_expression(m.constant_exprs.get(name),
                                        value, scope, 'vhdl')
+            if not text:
+                text = vhdl_base_number(m.constant_bases.get(name), value)
             lines.append(f'  constant {name} : integer := '
                          f'{text if text else value};')
         scope[name] = value
@@ -1584,6 +1586,25 @@ def vhdl_binop (ctx, e):
             left = f'signed({vhdl_expr(ctx, a)})'
         return f'std_logic_vector({fn}({left}, {amt}))'
     return f'({vhdl_expr(ctx, a)} {op} {vhdl_expr(ctx, b)})'
+
+
+VHDL_BASE = {'hex': 16, 'bin': 2, 'oct': 8}
+
+
+def vhdl_base_number (written, value):
+    """The VHDL spelling of a based literal: 0xdead is 16#dead#."""
+    if not written:
+        return None
+    base, digits = written
+    radix = VHDL_BASE.get(base)
+    if not radix or not digits:
+        return None
+    try:
+        if int(digits, radix) != int(value):
+            return None
+    except ValueError:
+        return None
+    return f'{radix}#{digits}#'
 
 
 def vhdl_name (name):

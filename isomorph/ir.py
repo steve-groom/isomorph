@@ -208,6 +208,9 @@ class Module:
     # what each constant was written as, where that was an expression
     # rather than a number: name -> source text (PARAMETERS.md stage 1)
     constant_exprs: dict = field(default_factory = dict)
+    # name -> (base, digits) for a constant written 0x, 0b or 0o, so
+    # the HDL can be read the way the Python was
+    constant_bases: dict = field(default_factory = dict)
 
 
 def render (e):
