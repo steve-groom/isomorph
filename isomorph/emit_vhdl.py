@@ -420,8 +420,27 @@ def array_init_vhdl (s):
     every FPGA tool reads it."""
     if (len(set(s.init)) == 1 and len(s.init) > 1):
         return ' := (others => ' + uniform_word(s.init[0], s.width) + ')'
-    items = ', '.join(bit_string(v, s.width) for v in s.init)
+    items = ', '.join(table_word(v, s.width) for v in s.init)
     return ' := (' + items + ')'
+
+
+def table_word (value, width):
+    """One word of a memory image, as the number it is.
+
+    SystemVerilog has said 20'd915 all along and VHDL said
+    "00000000001110010011", which is the same word and no help to
+    anyone reading the table. VHDL-2008 has a sized decimal bit string
+    and it is legal at any width, not just a multiple of four the way
+    the hex form used to be written here.
+
+    A negative word goes back to bits: a decimal bit string is
+    unsigned, so the alternative is the two's complement spelled as a
+    large positive number, which says less than the bits do.
+    """
+    value = int(value)
+    if value < 0:
+        return bit_string(value, width)
+    return f'{width}d"{value}"'
 
 
 def uniform_word (value, width):
@@ -1192,10 +1211,10 @@ def assign_lines (ctx, a):
     tgt = vhdl_expr(ctx, a.target)
     if a.value.op == 'ifexp':
         cond, x, y = a.value.args
-        line = (f'  {tgt} <= {vhdl_expr(ctx, x)} when '
-                f'{vhdl_condition(ctx, cond)} else {vhdl_expr(ctx, y)};')
+        line = (f'  {tgt} <= {rhs_expr(ctx, x)} when '
+                f'{vhdl_condition(ctx, cond)} else {rhs_expr(ctx, y)};')
     else:
-        line = f'  {tgt} <= {vhdl_expr(ctx, a.value)};'
+        line = f'  {tgt} <= {rhs_expr(ctx, a.value)};'
     lines.append(with_trailing(line, a.trailing))
     return lines
 
@@ -1309,7 +1328,7 @@ def stmt_lines (ctx, body, indent):
             use_var = root_name(s.target) in ctx.var_map or ctx.in_function
             tok = ':=' if use_var else '<='
             line = (f'{pad}{vhdl_target(ctx, s.target)} {tok} '
-                    f'{vhdl_expr(ctx, s.value)};')
+                    f'{rhs_expr(ctx, s.value)};')
             lines.append(with_trailing(line, trailing))
         elif isinstance(s, ir.If):
             lines += if_lines(ctx, s, indent)
@@ -1337,9 +1356,9 @@ def ifexp_assign (ctx, s, indent):
     tok = ':=' if use_var else '<='
     tgt = vhdl_target(ctx, s.target)
     lines = [f'{pad}if {vhdl_condition(ctx, cond)} then']
-    lines.append(f'{pad}  {tgt} {tok} {vhdl_expr(ctx, a)};')
+    lines.append(f'{pad}  {tgt} {tok} {rhs_expr(ctx, a)};')
     lines.append(f'{pad}else')
-    lines.append(f'{pad}  {tgt} {tok} {vhdl_expr(ctx, b)};')
+    lines.append(f'{pad}  {tgt} {tok} {rhs_expr(ctx, b)};')
     lines.append(f'{pad}end if;')
     return lines
 
@@ -1666,6 +1685,26 @@ def is_int_tree (ctx, e):
     if e.op == 'binop' and e.value in ('+', '-', '*'):
         return is_int_tree(ctx, e.args[0]) and is_int_tree(ctx, e.args[1])
     return False
+
+
+def rhs_expr (ctx, e):
+    """The right-hand side of an assignment.
+
+    A word of one repeated bit is written (others => \'0\'), which is
+    what every VHDL style guide asks for and what uniform_word already
+    emits for a memory: it says which bit rather than the bit thirteen
+    times, and it does not have to be counted or changed when the
+    width does. It is only legal where the target says how wide the
+    aggregate is, which is here and not inside an expression --
+    std_logic_vector\'(others => \'0\') is rejected, the type mark being
+    unconstrained leaves the aggregate no index range.
+    """
+    if e.op == 'const' and e.value is not None and e.width > 1:
+        value = int(e.value) & ((1 << e.width) - 1)
+        if value == 0 or value == (1 << e.width) - 1:
+            if str(e.value) not in ctx.int_names:
+                return uniform_word(value, e.width)
+    return vhdl_expr(ctx, e)
 
 
 def numeric (fn, inner):
