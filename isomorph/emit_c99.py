@@ -327,8 +327,9 @@ def enum_member (module_name, member_name):
     """One enum member, as a C macro name.
 
     Qualified by the module, because a define is global and a state
-    machine's states are not. one peripheral calls its first state IDLE and
-    so does the bridge above it, one of them one-hot and the other sequential,
+    machine's states are not. One peripheral calls its first state IDLE
+    and so does the bridge above it, one of them one-hot and the other
+    sequential,
     and the first define won: the bridge's IDLE compiled as 1 instead
     of 0 and only the C99 backend was wrong. SystemVerilog scopes an
     enum to its module and VHDL to its entity; C has to be told."""
@@ -681,7 +682,7 @@ def map_inst_clock (inst, child, parent_clock, by_name, parent = None):
     parent's edge only when one of its clock ports is really wired to
     that parent clock. Falling back to "the child has a process on a
     port that happens to be called the same thing" clocked every
-    a synchroniser chain in a PLL monitor on the parent's i_clock, because a
+    synchroniser in that monitor on the parent's i_clock, because a
     synchroniser's own clock port is also called i_clock, and a
     crossing then propagated in one edge instead of two. Verilator got
     it right and the two smoke backends did not.

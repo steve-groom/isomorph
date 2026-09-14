@@ -349,7 +349,7 @@ def array_type_name (name, width, count):
 
     VHDL types are matched by name, so naming one after the signal
     that happens to declare it makes two arrays of the same shape two
-    types, and a port map between them will not compile. a PLL monitor
+    types, and a port map between them will not compile. A PLL monitor
     takes pll0_i_clocks and a board hands it pll0_clocks: the same one
     entry of one bit, and ghdl refused the connection. Shape is what a
     type is, so shape is what it is called."""

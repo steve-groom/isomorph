@@ -18,7 +18,7 @@ def i2c ():
     the output, because another device may be holding it down.
 
     The inputs cross from an unrelated domain and must be synchronised
-    before use; a synchroniser chain is the chain for that."""
+    before use; a metastability sampler is the chain for that."""
     return SimpleNamespace(
         sda_o = signal(),
         sda_oe = signal(),
