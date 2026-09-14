@@ -1136,14 +1136,15 @@ def process_lines (ctx, p):
         saved = ctx.var_map
         ctx.var_map = {}
         ctx.in_function = False
+        reset = vhdl_name(p.reset)
         if p.reset:
             # if reset then ... elsif rising_edge(clock) then ...
             lines += reason_lines(p.reason, 2, '--')
-            lines.append(f'  {p.name} : process ({p.clock}, {p.reset}) is')
+            lines.append(f'  {p.name} : process ({p.clock}, {reset}) is')
             lines.append('  begin')
             level = "'1'" if p.reset_polarity == 'pos' else "'0'"
             node = p.body[0]
-            lines.append(f'    if {p.reset} = {level} then')
+            lines.append(f'    if {reset} = {level} then')
             lines += stmt_lines(ctx, node.branches[0][1], 6)
             lines.append(f'    elsif {edge}({p.clock}) then')
             lines += stmt_lines(ctx, node.branches[1][1], 6)
@@ -1583,6 +1584,15 @@ def vhdl_binop (ctx, e):
             left = f'signed({vhdl_expr(ctx, a)})'
         return f'std_logic_vector({fn}({left}, {amt}))'
     return f'({vhdl_expr(ctx, a)} {op} {vhdl_expr(ctx, b)})'
+
+
+def vhdl_name (name):
+    """An element of an array is arr[1] in the elaborator's own names
+    and arr(1) in VHDL. A reset taken from a reset synchroniser's last
+    flop is written that way, and nowhere else needs this."""
+    if not name:
+        return name
+    return str(name).replace('[', '(').replace(']', ')')
 
 
 def vhdl_bit (ctx, e):

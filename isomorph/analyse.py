@@ -741,8 +741,9 @@ class Analyser:
             e = stack.pop()
             if e is None:
                 continue
-            if getattr(e, 'op', None) == 'ref':
-                names.add(e.value)
+            if getattr(e, 'op', None) in ('ref', 'bit'):
+                if isinstance(e.value, str):
+                    names.add(e.value)
             stack.extend(getattr(e, 'args', []) or [])
         if reset not in names:
             raise ConversionError(
@@ -1457,9 +1458,13 @@ class Analyser:
                             if isinstance(base_obj, SignalArray)
                             else ast.unparse(node.value))
                     self.read.add(name)
+                    # the element it resolves to, for whatever still
+                    # has to know which one: the asynchronous reset
+                    # of a process is named, not indexed
+                    element = self.name_of(base_obj[index])
                     return ir.Expr('bit', base_obj.width, args = [
                         ir.Expr('ref', base_obj.width, value = name),
-                        written])
+                        written], value = element)
                 element = base_obj[index]
                 name = self.name_of(element)
                 self.read.add(name)

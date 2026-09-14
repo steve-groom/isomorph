@@ -12,7 +12,7 @@ import sys
 import subprocess
 
 from . import ir
-from .analyse import ConversionError
+from .analyse import ConversionError, root_name
 from .widths import (checked_expression, constant_expression,
                      render_expression, width_expression)
 
@@ -910,6 +910,7 @@ def attribute_lines (attributes, indent):
 
 def signal_lines (m):
     lines = []
+    waived = async_reset_nets(m)
     for s in m.signals:
         lines += comment_lines(s.comments, 4)
         packed = packed_type(s.width, s.kind, s.type, m.parameters,
@@ -920,8 +921,16 @@ def signal_lines (m):
             name = f'{name} [{array_size(s, m)}]'
         lines += attribute_lines(s.attributes, 4)
         tail = array_init_sv(s) if s.array and s.init else ''
+        waive = s.name in waived
+        if waive:
+            lines.append('    // asserted with no clock and released '
+                         'with one, which is')
+            lines.append('    // what a reset synchroniser is')
+            lines.append('    /* verilator lint_off SYNCASYNCNET */')
         lines += trailing_lines(f'    {packed} {name}{tail};',
                                 s.trailing, 4)
+        if waive:
+            lines.append('    /* verilator lint_on SYNCASYNCNET */')
     if lines:
         lines.append('')
     return lines
@@ -1442,6 +1451,41 @@ def sv_index_operand (e, outer = 0, right = False):
             or (right and inner == outer)):
         return f'({text})'
     return text
+
+
+def async_reset_nets (m):
+    """Signals this module clocks and also uses as an asynchronous
+    reset, which is a reset synchroniser and nothing else.
+
+    Verilator reports SYNCASYNCNET on a net flopped both ways, and it
+    is right to: the pattern is a bug everywhere except here, where
+    the whole circuit exists to assert with no clock and release with
+    one. always_ff_async_reset is the deliberate construct that makes
+    it, so the file it emits waives the warning on that one net
+    rather than leaving a design that cannot pass its own lint.
+    """
+    resets = {str(p.reset).split('[')[0]
+              for p in m.processes if p.reset}
+    clocked = set()
+    for p in m.processes:
+        if p.kind == 'ff':
+            clocked |= {root_name(a.target) for a in walk_assigns(p.body)}
+    return resets & clocked
+
+
+def walk_assigns (body):
+    """Every assignment in these statements, however nested."""
+    for s in body or []:
+        if isinstance(s, ir.Assign):
+            yield s
+        elif isinstance(s, ir.If):
+            for _, inner in s.branches:
+                yield from walk_assigns(inner)
+        elif isinstance(s, ir.Match):
+            for _, inner in s.arms:
+                yield from walk_assigns(inner)
+        elif isinstance(s, ir.For):
+            yield from walk_assigns(s.body)
 
 
 def array_size (s, m):
