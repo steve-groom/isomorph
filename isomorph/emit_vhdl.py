@@ -1541,6 +1541,11 @@ def vhdl_condition (ctx, e):
     if e.op == 'not':
         inner = vhdl_condition(ctx, e.args[0])
         return f'not ({inner})'
+    if e.op == 'ref' and e.value in ctx.int_names:
+        # an integer generic is true when it is not zero, the way the
+        # SystemVerilog if reads it, and narrowing it to one bit first
+        # would answer for a value of two with the bit it kept
+        return f'{e.value} /= 0'
     text = vhdl_expr(ctx, e)
     if e.width == 1 and e.op != 'enum':
         return f"{text} = '1'"

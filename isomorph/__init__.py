@@ -3,7 +3,7 @@ import os
 import sys
 
 from .signal import (signal, signals, vector, enum, struct,
-    preload, hexed, attr, open_port, concat, replicate, ones, zeroes,
+    preload, hexed, rtl, attr, open_port, concat, replicate, ones, zeroes,
     bits, always_comb,
     always_ff, always_ff_async_reset, assign, clock, const, sign_extend,
     instances, IsomorphError)
@@ -22,7 +22,7 @@ from .execute import SimError
 from .sim import Simulator
 
 __all__ = ['block', 'blackbox', 'signal', 'signals', 'vector', 'enum',
-           'struct', 'preload', 'hexed', 'attr', 'open_port', 'clock',
+           'struct', 'preload', 'hexed', 'rtl', 'attr', 'open_port', 'clock',
            'const', 'concat',
            'replicate', 'ones', 'zeroes', 'sign_extend', 'bits',
            'always_comb',

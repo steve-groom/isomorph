@@ -373,6 +373,24 @@ def hexed (value, bits = None):
     return out
 
 
+class Rtl (int):
+    """A parameter the emitted HDL keeps as a parameter.
+
+    A condition on an ordinary parameter is answered while the design
+    elaborates, and the branch it does not take never reaches the IR:
+    two values of it are two module bodies. One of these stays a name
+    all the way through, so the condition is emitted and the two builds
+    are one module told apart by what it is instantiated with. It is an
+    int rather than a bool because a bool parameter is elaboration-only
+    and never reaches the HDL.
+    """
+
+
+def rtl (value):
+    """Tag a parameter as one the emitted HDL takes at instantiation."""
+    return Rtl(int(value))
+
+
 def preload (array, values, base = 'dec'):
     """The contents a memory holds when the device is configured.
 

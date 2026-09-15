@@ -13,7 +13,7 @@ from .widths import checked_expression
 from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
     sign_extend, StructType, Process, Assign, Vector, IsomorphError, concat,
-    replicate, ones, zeroes, bits, vector, Hexed)
+    replicate, ones, zeroes, bits, vector, Hexed, Rtl)
 from . import reserved
 
 
@@ -1166,7 +1166,7 @@ class Analyser:
         try:
             names = {k: v for k, v in scope.names.items()
                      if isinstance(v, (int, bool))
-                     and not isinstance(v, Signal)}
+                     and not isinstance(v, (Signal, Rtl))}
             for k, v in scope.locals.items():
                 if v[0] == 'const':
                     names[k] = v[1]
