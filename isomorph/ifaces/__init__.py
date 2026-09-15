@@ -7,7 +7,7 @@ block RAM read and write - belong with the library, in isomorph.lib.
 from .avalon import avalon_mm, avalon_st
 from .wishbone import wishbone
 from .axi import axi4_lite
-from .spi import spi, spim, spis, spis_tri
+from .spi import spi
 from .gpio import gpio, irq
 from .i2c import i2c
 from .uart import uart
@@ -15,6 +15,6 @@ from .config import config
 from .memory import sdram, hyperram
 
 __all__ = ['avalon_mm', 'avalon_st', 'wishbone', 'axi4_lite',
-           'spi', 'spim', 'spis', 'spis_tri',
+           'spi',
            'gpio', 'irq', 'i2c', 'uart', 'config',
            'sdram', 'hyperram']
