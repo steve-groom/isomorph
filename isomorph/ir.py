@@ -2,7 +2,7 @@
 
 Every expression carries a width and a signedness. Statements are the
 small set of section 3.4; modules are section 4.1."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 @dataclass
@@ -191,6 +191,14 @@ class Instance:
     shape: dict = field(default_factory = dict)    # formal -> how it
                                # varies, on member 0: ('same', Expr) or
                                # ('index', base name)
+    # built inside a when(), so the HDL emitters put it in an
+    # if ... generate and the three simulators leave it out when the
+    # condition it was written against is false (SPEC 5.16).
+    guard: str = None          # the condition as it was written
+    guard_on: bool = True      # what that condition came to
+    # what the instance drove, so the arm that leaves it out can hold
+    # those lines at zero rather than leave them undriven
+    guard_outputs: list = field(default_factory = list)
 
 
 @dataclass
@@ -274,3 +282,20 @@ def render (e):
     if e.op == 'extend':
         return f"{'sext' if e.signed else 'zext'}{e.width}({render(a[0])})"
     return f'<{e.op}>'
+
+
+def running (modules):
+    """The modules as a simulator sees them.
+
+    An instance a when() turned off is not there at all, where the HDL
+    emitters keep it: an if ... generate is what lets the two builds be
+    one module, and the condition is answered by the tool rather than
+    here.
+    """
+    out = []
+    for m in modules:
+        if any(not i.guard_on for i in m.instances):
+            m = replace(
+                m, instances = [i for i in m.instances if i.guard_on])
+        out.append(m)
+    return out

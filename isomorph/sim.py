@@ -8,6 +8,7 @@ from ctypes import (POINTER, Structure, c_int, c_uint64, c_char_p, CDLL,
 
 from .analyse import analyse
 from .elaborate import Elaborated
+from .ir import running
 from .emit_c99 import (ff_driven_names, module_clocks, clock_id,
                        hierarchy_clocks, write_c99, alias_source)
 from .execute import Executor, SimError, split_index
@@ -130,9 +131,9 @@ class Simulator:
         self.dut = Probe(self, [s.name for s in
                                 list(self.top.signals) + list(self.top.ports)])
         if backend == 'python':
-            self._python = Executor(self.modules)
+            self._python = Executor(running(self.modules))
         elif backend == 'c99':
-            self._c99 = C99Backend(self.modules, workdir)
+            self._c99 = C99Backend(running(self.modules), workdir)
             self._native = self._c99
         elif backend == 'verilator':
             from .verilator import VerilatorBackend

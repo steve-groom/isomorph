@@ -1083,7 +1083,7 @@ def item_lines (m):
     lines = []
     for _, _, _, kind, item in items:
         if kind == 'instance':
-            lines += instance_lines(item)
+            lines += guarded_lines(instance_lines(item), item)
         elif kind == 'array':
             lines += generate_lines(item)
         elif kind == 'assign':
@@ -1144,6 +1144,31 @@ def generate_lines (head):
         lines.append(f'                .{formal}({mapped}){comma}')
     lines.append('            );')
     lines.append('        end')
+    lines.append('    endgenerate')
+    return lines
+
+
+def guarded_lines (body, inst):
+    """An instance built inside a when(), as an if ... generate.
+
+    The label is the instance's own name with a prefix, because both
+    languages want one on a generate and the name is the only thing
+    here that says which instance it belongs to."""
+    if not inst.guard:
+        return body
+    label = f'g_{inst.name}'
+    lines = ['    generate']
+    lines.append(f'        if ({inst.guard}) begin : {label}')
+    lines += ['        ' + line if line else line for line in body]
+    lines.append('        end')
+    if inst.guard_outputs:
+        # the other arm holds what the instance drove, because a line
+        # nothing drives is one the tools call out and the simulators
+        # read as zero anyway
+        lines.append(f'        else begin : {label}')
+        for name, width in inst.guard_outputs:
+            lines.append(f"            assign {name} = {width}'b0;")
+        lines.append('        end')
     lines.append('    endgenerate')
     return lines
 

@@ -1168,7 +1168,8 @@ def item_lines (ctx):
     lines = []
     for _, _, _, kind, item in items:
         if kind == 'instance':
-            lines += instance_lines(ctx, item)
+            lines += guarded_lines(ctx, instance_lines(ctx, item),
+                                   item)
         elif kind == 'array':
             lines += generate_lines(ctx, item)
         elif kind == 'assign':
@@ -1218,6 +1219,27 @@ def vhdl_param (value):
     if isinstance(value, str):
         return '"' + value.replace('"', '') + '"'
     return str(int(value))
+
+
+def guarded_lines (ctx, body, inst):
+    """An instance built inside a when(), as an if ... generate.
+
+    An integer generic is true when it is not zero, the way the
+    SystemVerilog if reads it."""
+    if not inst.guard:
+        return body
+    test = inst.guard
+    if test in ctx.int_names:
+        test = f'{test} /= 0'
+    lines = [f'  g_{inst.name} : if {test} generate']
+    lines += ['  ' + line if line else line for line in body]
+    if inst.guard_outputs:
+        lines.append('  else generate')
+        for name, width in inst.guard_outputs:
+            zero = "'0'" if width == 1 else "(others => '0')"
+            lines.append(f'    {name} <= {zero};')
+    lines.append('  end generate;')
+    return lines
 
 
 def instance_lines (ctx, inst):

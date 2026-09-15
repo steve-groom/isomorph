@@ -35,7 +35,8 @@ verify/run_sdram.sh already has.
 """
 import sys
 
-from .signal import Signal, OpenPort, IsomorphError, note_made
+from .signal import (Signal, OpenPort, IsomorphError, note_made,
+                     current_guard)
 
 
 class BlackboxType:
@@ -105,6 +106,7 @@ class Blackbox:
         self.array_index = 0
         self.array_count = 0
         self._name_override = None
+        self.guard = current_guard()
         # the line the block instantiated it on, for ordering and for
         # the comment written above it
         frame = sys._getframe(1)

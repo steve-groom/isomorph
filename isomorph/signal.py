@@ -6,6 +6,7 @@ an AST; assign() records an expression the same way. Section 3 of
 SPEC.txt is the reference."""
 import ast
 import dis
+import inspect
 import sys
 from types import SimpleNamespace
 
@@ -389,6 +390,65 @@ class Rtl (int):
 def rtl (value):
     """Tag a parameter as one the emitted HDL takes at instantiation."""
     return Rtl(int(value))
+
+
+guard_stack = []
+
+
+class Guard:
+    """What a `with when(...)` was written as, and what it came to.
+
+    The text is what the emitted HDL puts on the generate, so that two
+    builds of a block are the same text and one module; the value is
+    what the three simulators read, because a guard that is off is a
+    block that is not there rather than one that is quiet.
+    """
+
+    def __init__ (self, value, text):
+        self.value = value
+        self.text = text
+
+    def __enter__ (self):
+        guard_stack.append(self)
+        return self
+
+    def __exit__ (self, kind, value, trace):
+        guard_stack.pop()
+        return False
+
+
+def when (condition):
+    """Build the instances inside only when the condition holds.
+
+    Written against an rtl() parameter the condition reaches the HDL
+    as an if ... generate, so the one module covers both builds. The
+    call has to be on one line, the way assign() does, because the
+    text is read back off the source.
+    """
+    return Guard(condition, _guard_text())
+
+
+def _guard_text ():
+    frame = sys._getframe(2)
+    try:
+        lines, start = inspect.getsourcelines(frame)
+        text = lines[frame.f_lineno - start].strip()
+    except (OSError, TypeError, IndexError):
+        return None
+    try:
+        tree = ast.parse(text + ' pass')
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and node.args
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'when'):
+            return ast.unparse(node.args[0])
+    return None
+
+
+def current_guard ():
+    return guard_stack[-1] if guard_stack else None
 
 
 def preload (array, values, base = 'dec'):

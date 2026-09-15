@@ -625,12 +625,22 @@ class Analyser:
         # configured and the only place they can be said is here
         params = dict(getattr(child, 'parameters', {})) \
             if isinstance(child, Blackbox) else {}
+        guard = getattr(child, 'guard', None)
+        outputs = []
+        if guard is not None:
+            directions = self.child_directions.get(child.module_name, {})
+            for formal, actual in ports.items():
+                if actual is not None and directions.get(formal) == 'out':
+                    outputs.append((actual.value, actual.width))
         return ir.Instance(child.instance_name, child.module_name, ports,
                            child.line, self.leading_comments(child.line),
                            params = params,
                            array = child.array_name,
                            index = child.array_index,
-                           count = child.array_count)
+                           count = child.array_count,
+                           guard = guard.text if guard else None,
+                           guard_on = bool(guard.value) if guard else True,
+                           guard_outputs = outputs)
 
     # ---- bodies ------------------------------------------------------------
     def _tree (self, func):

@@ -9,7 +9,7 @@ from types import FunctionType, SimpleNamespace
 
 from .signal import (Signal, SignalArray, EnumType, StructType,
     Process, Assign, Instances, OpenPort, IsomorphError, array_view,
-    elaboration_stack, made_stack, note_made)
+    elaboration_stack, made_stack, note_made, current_guard, guard_stack)
 from .blackbox import Blackbox
 
 
@@ -225,6 +225,7 @@ class Elaborated:
         self.arguments = arguments          # bound arguments, in order
         self.ports = {}                     # name -> Signal | namespace | list
         self.parameters = {}                # name -> int/bool/EnumType
+        self.guard = None                   # the when() it was built in
         self.signals = {}                   # name -> Signal
         self.arrays = {}                    # name -> SignalArray
         self.constants = {}                 # name -> int
@@ -538,9 +539,15 @@ def block (func):
                 bound.arguments[name] = Signal(value.width)
         elaboration_stack.append([])
         made_stack.append([])
+        # the guard belongs to the call, not to what the block builds
+        # under it, so the body runs with none of its own
+        guard = current_guard()
+        outer = list(guard_stack)
+        guard_stack.clear()
         try:
             result = func(*bound.args, **bound.kwargs)
         finally:
+            guard_stack.extend(outer)
             assigns = elaboration_stack.pop()
             made_stack.pop()
         if not isinstance(result, Instances):
@@ -549,6 +556,7 @@ def block (func):
         elaborated = Elaborated(func, dict(bound.arguments), result.locals,
                                 assigns)
         elaborated.open_ports = open_ports
+        elaborated.guard = guard
         elaborated.line = sys._getframe(1).f_lineno
         # the parent is the block that will have to keep hold of this
         note_made(elaborated)
