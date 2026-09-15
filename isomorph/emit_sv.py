@@ -1459,7 +1459,15 @@ def sv_expr (e, index = False):
             # a shift amount is self-determined, so it is a count and
             # not a vector: x >> 1, the way it would be typed
             return f'({sv_expr(a[0])} {token} {sv_expr(a[1], True)})'
-        return f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
+        text = f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
+        if e.int_tree:
+            # arithmetic on named constants is integer arithmetic, 32
+            # bits wide whatever the numbers are. Beside a vector that
+            # is what Verilator calls WIDTHEXPAND, so it is given the
+            # width it is being read at, which is what the VHDL says
+            # with to_unsigned(x, n)
+            return f"{e.width}'{text}"
+        return text
     if op == 'cmp':
         return f'({sv_expr(a[0])} {e.value} {sv_expr(a[1])})'
     if op == 'unop':

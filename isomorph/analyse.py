@@ -1096,6 +1096,13 @@ class Analyser:
                 # an extend to the size it is would only be noise.
                 if not (isinstance(number, Hexed) and number.bits):
                     return ir.Expr('extend', width, value.signed, [value])
+        if value.int_tree and value.width <= width:
+            # integer arithmetic has no width of its own either, so it
+            # is given the one it is read at rather than the one its
+            # operands happened to need and a cast on top of that:
+            # to_unsigned(WIDTHA - 1, 8), not a resize of a to_unsigned
+            value.width = width
+            return value
         if value.width > width:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
@@ -1408,10 +1415,20 @@ class Analyser:
             return ir.Expr('binop', max(left.width, right.width), signed,
                            [left, right], op)
         if op in ('+', '-'):
-            return ir.Expr('binop', max(left.width, right.width) + 1, signed,
-                           [left, right], op)
-        return ir.Expr('binop', left.width + right.width, signed,
-                       [left, right], op)
+            out = ir.Expr('binop', max(left.width, right.width) + 1, signed,
+                          [left, right], op)
+        else:
+            out = ir.Expr('binop', left.width + right.width, signed,
+                          [left, right], op)
+        out.int_tree = self.integer_tree(left) and self.integer_tree(right)
+        return out
+
+    def integer_tree (self, e):
+        """Nothing but named constants and literals, so both languages
+        do it at integer width and neither gives the result a size."""
+        if e.int_tree:
+            return True
+        return e.op in ('const', 'ref') and self.number(e) is not None
 
     SIGNED_OPS = ('+', '-', '*', '<', '<=', '>', '>=')
 

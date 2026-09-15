@@ -22,6 +22,10 @@ class Expr:
     # a literal beside a named constant: both languages do that
     # arithmetic at integer width, so the literal carries no size
     unsized: bool = False
+    # arithmetic on nothing but named constants and literals, which is
+    # integer arithmetic in both languages and has to be given a width
+    # where it meets a vector: VHDL's to_unsigned(x, n) and SV's n'(x)
+    int_tree: bool = False
 
     def __repr__ (self):
         return render(self)
