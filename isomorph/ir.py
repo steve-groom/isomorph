@@ -19,6 +19,9 @@ class Expr:
     # for an extend: how the target's width was written, so the cast
     # follows the generic instead of folding (PARAMETERS.md stage 3)
     width_expr: str = None
+    # a literal beside a named constant: both languages do that
+    # arithmetic at integer width, so the literal carries no size
+    unsized: bool = False
 
     def __repr__ (self):
         return render(self)
@@ -213,6 +216,9 @@ class Module:
     # name -> (base, digits) for a constant written 0x, 0b or 0o, so
     # the HDL can be read the way the Python was
     constant_bases: dict = field(default_factory = dict)
+    # name -> (base, digits) for a parameter written 0x, 0b or 0o, or
+    # handed a value hexed() tagged, so a generic reads as it was meant
+    parameter_bases: dict = field(default_factory = dict)
     # name -> (comments above it, comment after it) for a parameter,
     # which is written in the signature like a port and reaches the
     # HDL the same way

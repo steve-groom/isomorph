@@ -13,7 +13,7 @@ from .widths import checked_expression
 from .blackbox import Blackbox
 from .signal import (Signal, SignalArray, EnumType, EnumMember, const,
     sign_extend, StructType, Process, Assign, Vector, IsomorphError, concat,
-    replicate, ones, zeroes, bits, vector)
+    replicate, ones, zeroes, bits, vector, Hexed)
 from . import reserved
 
 
@@ -235,6 +235,7 @@ class Analyser:
                 mod.parameter_comments[name] = (before, after)
         mod.constant_exprs = constant_expressions(e.func, e.constants)
         mod.constant_bases = constant_bases(e.func, e.constants)
+        mod.parameter_bases = parameter_bases(e.func, e.parameters)
         written = array_expressions(e.func, e.arrays)
         for sig in mod.signals:
             if sig.array and sig.name in written:
@@ -1089,7 +1090,12 @@ class Analyser:
                 # BYTES_A. Say the width here instead of relying on
                 # the tool's context rules, which is what SPEC 4.2
                 # asks for everywhere else. VHDL already said it.
-                return ir.Expr('extend', width, value.signed, [value])
+                #
+                # A hexed() parameter is a vector of a stated width in
+                # both languages, so it says its own width already and
+                # an extend to the size it is would only be noise.
+                if not (isinstance(number, Hexed) and number.bits):
+                    return ir.Expr('extend', width, value.signed, [value])
         if value.width > width:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
@@ -1250,8 +1256,10 @@ class Analyser:
             if isinstance(obj, int):
                 if isinstance(node, ast.Name) and (node.id in self.e.constants
                         or node.id in self.e.parameters):
-                    return ir.Expr('ref', min_width(obj), obj < 0,
-                                   value = node.id)
+                    width = min_width(obj)
+                    if (isinstance(obj, Hexed) and obj.bits):
+                        width = obj.bits
+                    return ir.Expr('ref', width, obj < 0, value = node.id)
                 return ir.Expr('const', min_width(obj), obj < 0, value = obj)
             if isinstance(obj, tuple) and obj[0] == 'local':
                 _, name, kind, *rest = obj
@@ -1346,6 +1354,14 @@ class Analyser:
             width = max(a.width, b.width)
             a.width = width
             b.width = width
+            # a named one is an integer in both languages, so the
+            # literal beside it is integer arithmetic too and a size
+            # on it is the width Verilator argues about: WIDTHA - 4'd1
+            # is a SUB wanting 32 bits on the right
+            if a.op == 'ref' or b.op == 'ref':
+                for side in (a, b):
+                    if side.op == 'const':
+                        side.unsized = True
         elif a_number is not None:
             if min_width(a_number) > b.width:
                 self.error(node, f'constant {a_number} wider than '
@@ -2276,6 +2292,43 @@ def constant_expressions (func, names):
 
 
 BASE_PREFIX = {'0x': 'hex', '0b': 'bin', '0o': 'oct'}
+
+
+def parameter_bases (func, values):
+    """How each parameter default was written, and what a value says
+    about itself.
+
+    A default written 0xC0FFEE carries its base in the source. One a
+    function worked out carries nothing, so hexed() marks the value
+    and that is read here too.
+    """
+    out = {}
+    for name, value in values.items():
+        if isinstance(value, Hexed):
+            out[name] = ('hex', format(int(value), 'X'))
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError, ValueError):
+        return out
+    if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+        return out
+    args = tree.body[0].args
+    named = list(args.args) + list(args.kwonlyargs)
+    defaults = ([None] * (len(args.args) - len(args.defaults))
+                + list(args.defaults) + list(args.kw_defaults))
+    for arg, default in zip(named, defaults):
+        if default is None or arg.arg not in values:
+            continue
+        if not (isinstance(default, ast.Constant)
+                and isinstance(default.value, int)
+                and not isinstance(default.value, bool)):
+            continue
+        text = (ast.get_source_segment(source, default) or '').strip()
+        base = BASE_PREFIX.get(text[:2].lower())
+        if base:
+            out[arg.arg] = (base, text[2:].replace('_', ''))
+    return out
 
 
 def constant_bases (func, names):

@@ -13,6 +13,7 @@ import subprocess
 
 from . import ir
 from .analyse import ConversionError, root_name
+from .signal import Hexed
 from .widths import (checked_expression, constant_expression,
                      render_expression, width_expression)
 
@@ -55,6 +56,20 @@ def fit_comment (line, indent, marker):
 SV_INT_MAX = 2 ** 31 - 1
 
 
+def hexed_width (value):
+    """The width a hexed() value said it was, or the word it fills."""
+    return value.bits or max(32, ((min_width(value) + 3) // 4) * 4)
+
+
+def sv_hexed (value):
+    """A hexed() value as a sized hex literal, the width it declared.
+
+    Its VHDL twin is a std_logic_vector generic, and the two have to
+    read as the same word: x"41424344" there and 32'h41424344 here."""
+    width = hexed_width(value)
+    return f"{width}'h{int(value) & ((1 << width) - 1):0{(width + 3) // 4}X}"
+
+
 def sv_param (value):
     """A parameter value as SystemVerilog.
 
@@ -65,6 +80,8 @@ def sv_param (value):
         return '"' + value.replace('"', '') + '"'
     if isinstance(value, bool):
         return "1'b1" if value else "1'b0"
+    if isinstance(value, Hexed):
+        return sv_hexed(value)
     return sv_number(value)
 
 
@@ -854,8 +871,15 @@ def parameter_lines (m, body = None):
         comma = ',' if index < len(kept) - 1 else ''
         before, after = m.parameter_comments.get(name, ([], None))
         lines += comment_lines(before, 4)
-        lines += trailing_lines(
-            f'    parameter {name} = {sv_number(value)}{comma}', after, 4)
+        if isinstance(value, Hexed):
+            width = hexed_width(value)
+            kind = 'logic' if width == 1 else f'logic [{width - 1}:0]'
+            text = f'    parameter {kind} {name} = {sv_hexed(value)}{comma}'
+        else:
+            spelt = sv_base_number(m.parameter_bases.get(name), value)
+            text = (f'    parameter {name} = '
+                    f'{spelt or sv_number(value)}{comma}')
+        lines += trailing_lines(text, after, 4)
     return lines
 
 
@@ -1336,7 +1360,7 @@ def sv_expr (e, index = False):
     if op == 'ref':
         return e.value
     if op == 'const':
-        if index:
+        if index or e.unsized:
             return str(int(e.value))
         return sv_const(e.value, e.width, e.signed, e.base)
     if op == 'enum':

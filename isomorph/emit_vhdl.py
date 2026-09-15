@@ -20,6 +20,7 @@ import subprocess
 from . import ir
 from .analyse import ConversionError
 from .emit_sv import merge_builds, INDEX_PRECEDENCE, retarget
+from .signal import Hexed
 from .widths import width_expression, constant_expression
 from . import reserved
 
@@ -104,10 +105,17 @@ def wide_params (modules):
     def note (module, name, value):
         if isinstance(value, bool) or not isinstance(value, int):
             return
-        if fits_integer(value):
+        # hexed() says the value is a bit pattern, so it is a vector
+        # here whatever its size: x"41424344" is what a reader wants
+        # and 16#41424344# is not
+        if isinstance(value, Hexed):
+            width = value.bits or word_width(value)
+        elif fits_integer(value):
             return
+        else:
+            width = word_width(value)
         slot = wide.setdefault(module, {})
-        slot[name] = max(slot.get(name, 0), word_width(value))
+        slot[name] = max(slot.get(name, 0), width)
 
     for m in modules:
         for name, value in m.parameters.items():
@@ -787,6 +795,26 @@ def generic_map (child, inst_params):
             if isinstance(v, int) and not isinstance(v, bool)]
 
 
+def based_number (written, value):
+    """An integer in the base its author wrote it in, or None.
+
+    VHDL spells one 16#FF00#, and the digits are checked against the
+    value so a source line nobody can read back cannot rename it.
+    """
+    if not written:
+        return None
+    base, digits = written
+    radix = {'hex': 16, 'bin': 2, 'oct': 8}.get(base)
+    if not radix or not digits:
+        return None
+    try:
+        if int(digits, radix) != int(value):
+            return None
+    except ValueError:
+        return None
+    return f'{radix}#{digits}#'
+
+
 def entity_lines (m, wide = None, live = None):
     wide = wide or {}
     lines = [f'entity {m.name} is']
@@ -810,8 +838,10 @@ def entity_lines (m, wide = None, live = None):
                     f'    {name} : std_logic_vector({w - 1} downto 0) '
                     f':= {wide_literal(value, w)}{semi}')
             else:
+                text = based_number(m.parameter_bases.get(name), value)
                 lines += trailing_lines(
-                    f'    {name} : integer := {value}{semi}', after, 4)
+                    f'    {name} : integer := {text or value}{semi}',
+                    after, 4)
         lines.append('  );')
     if m.ports:
         lines.append('  port (')

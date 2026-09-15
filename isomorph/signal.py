@@ -352,6 +352,27 @@ def array_view (elements):
     return view
 
 
+class Hexed (int):
+    """A bit pattern that happens to be held in an int.
+
+    A parameter written 0xC0FFEE carries its base in the source and
+    the emitters find it there. One a function worked out does not:
+    four characters packed into a word arrive as 1430344276, and
+    nobody decodes that back to what was typed. A parameter holding
+    one of these is a vector in the emitted HDL rather than an
+    integer, which is what it is.
+    """
+
+    bits = None
+
+
+def hexed (value, bits = None):
+    """Tag a value as a bit pattern `bits` wide, to be emitted as one."""
+    out = Hexed(int(value))
+    out.bits = bits
+    return out
+
+
 def preload (array, values, base = 'dec'):
     """The contents a memory holds when the device is configured.
 
