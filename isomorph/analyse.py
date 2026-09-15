@@ -1096,13 +1096,25 @@ class Analyser:
                 # an extend to the size it is would only be noise.
                 if not (isinstance(number, Hexed) and number.bits):
                     return ir.Expr('extend', width, value.signed, [value])
-        if value.int_tree and value.width <= width:
+        if value.int_tree:
             # integer arithmetic has no width of its own either, so it
             # is given the one it is read at rather than the one its
             # operands happened to need and a cast on top of that:
             # to_unsigned(WIDTHA - 1, 8), not a resize of a to_unsigned
-            value.width = width
-            return value
+            #
+            # Its width is the operands' plus one, which is what an add
+            # of two unknowns needs and more than WIDTH - 1 does. The
+            # value is known here, so it is the one that decides.
+            folded = self.folded(value)
+            if value.width <= width:
+                value.width = width
+                return value
+            if folded is not None:
+                if min_width(folded) > width:
+                    self.error(node, f'{folded} does not fit in '
+                               f'{width} bits')
+                value.width = width
+                return value
         if value.width > width:
             self.error(node, f'result truncated: {value.width}-bit value '
                        f'assigned to {width} bits; slice it explicitly')
@@ -1429,6 +1441,24 @@ class Analyser:
         if e.int_tree:
             return True
         return e.op in ('const', 'ref') and self.number(e) is not None
+
+    def folded (self, e):
+        """What an expression of named constants and literals comes to,
+        or None where some part of it is not one."""
+        number = self.number(e)
+        if number is not None:
+            return number
+        if e.op != 'binop' or e.value not in ('+', '-', '*'):
+            return None
+        left = self.folded(e.args[0])
+        right = self.folded(e.args[1])
+        if left is None or right is None:
+            return None
+        if e.value == '+':
+            return left + right
+        if e.value == '-':
+            return left - right
+        return left * right
 
     SIGNED_OPS = ('+', '-', '*', '<', '<=', '>', '>=')
 

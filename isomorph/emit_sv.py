@@ -1076,7 +1076,10 @@ def item_lines (m):
         items.append((a.line, 1, '', 'assign', a))
     for p in m.processes:
         items.append((p.line, 2, p.name, 'process', p))
-    items.sort()
+    # by where it was written, and no further: two assigns on one
+    # source line tie on every part of the key, and sorting would then
+    # reach for the items themselves, which do not compare
+    items.sort(key = lambda item: item[:4])
     lines = []
     for _, _, _, kind, item in items:
         if kind == 'instance':
