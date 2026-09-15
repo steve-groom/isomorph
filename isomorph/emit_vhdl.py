@@ -1550,7 +1550,20 @@ def vhdl_cmp_bool (ctx, e):
     vhdl_op = {'==': '=', '!=': '/=', '<': '<', '<=': '<=',
                '>': '>', '>=': '>='}[op]
     if op in ('==', '!='):
-        return f'{vhdl_expr(ctx, a)} {vhdl_op} {vhdl_expr(ctx, b)}'
+        left = vhdl_expr(ctx, a)
+        right = vhdl_expr(ctx, b)
+        # both sides converted to a vector only to be compared as one.
+        # The conversions cancel the way numeric() cancels a single
+        # one, and numeric_std compares two unsigned values of unequal
+        # length where two vectors of unequal length is an error, so
+        # the shorter line is the safer one as well
+        lhs = matched(left, 'std_logic_vector(')
+        rhs = matched(right, 'std_logic_vector(')
+        if lhs is not None and rhs is not None:
+            kind = numeric_type(lhs)
+            if kind is not None and kind == numeric_type(rhs):
+                return f'{lhs} {vhdl_op} {rhs}'
+        return f'{left} {vhdl_op} {right}'
     left = as_unsigned(ctx, a)
     right = as_unsigned(ctx, b)
     return f'{left} {vhdl_op} {right}'
@@ -1710,10 +1723,10 @@ def as_unsigned (ctx, e):
         return f'to_unsigned({e.value}, {e.width})'
     text = vhdl_expr(ctx, e)
     if e.signed or e.op == 'signed':
-        return f'signed({text})'
+        return numeric('signed', text)
     if e.width == 1:
         return f"unsigned'('0' & {text})"
-    return f'unsigned({text})'
+    return numeric('unsigned', text)
 
 
 def is_int_tree (ctx, e):
@@ -1746,6 +1759,99 @@ def rhs_expr (ctx, e):
     return vhdl_expr(ctx, e)
 
 
+def matched (text, prefix):
+    """The body of a `prefix ... )` call when the whole of text is that
+    one call, or None.
+
+    The parentheses are counted rather than trusted: the text
+    std_logic_vector(a) & std_logic_vector(b) starts with the prefix
+    and ends with a bracket without being a conversion of anything.
+    """
+    if not text.startswith(prefix) or not text.endswith(')'):
+        return None
+    depth = 0
+    for index, char in enumerate(text):
+        if char == '(':
+            depth += 1
+        if char == ')':
+            depth -= 1
+            if depth == 0:
+                if index == len(text) - 1:
+                    return text[len(prefix):-1]
+                return None
+    return None
+
+
+def first_argument (text):
+    depth = 0
+    for index, char in enumerate(text):
+        if char == '(':
+            depth += 1
+        if char == ')':
+            depth -= 1
+        if char == ',' and depth == 0:
+            return text[:index]
+    return text
+
+
+def arithmetic_left (text):
+    """The left operand of a depth-zero + - or *, or None.
+
+    A depth-zero & says no: a concatenation is a std_logic_vector
+    whatever the things being joined were, so nothing about it may be
+    read as a numeric type.
+    """
+    depth = 0
+    left = None
+    for index, char in enumerate(text):
+        if char == '(':
+            depth += 1
+        if char == ')':
+            depth -= 1
+        if depth:
+            continue
+        if char == '&':
+            return None
+        if (char in '+-*' and left is None and index
+                and text[index - 1] == ' '
+                and text[index + 1:index + 2] == ' '):
+            left = text[:index - 1]
+    return left
+
+
+# the ones whose first argument decides the answer's type
+NUMERIC_CARRIERS = ('resize', 'shift_left', 'shift_right',
+                    'rotate_left', 'rotate_right')
+
+
+def numeric_type (text):
+    """The numeric_std type a rendered expression already has, or None
+    where the text does not say.
+
+    Read off the text, which is what a reader has to do too. Anything
+    it cannot be sure of is None, and the caller then converts.
+    """
+    text = text.strip()
+    inner = matched(text, '(')
+    if inner is not None:
+        return numeric_type(inner)
+    if text.startswith('-'):
+        return numeric_type(text[1:])
+    for fn in ('unsigned', 'signed'):
+        if matched(text, f'{fn}(') is not None:
+            return fn
+        if matched(text, f'to_{fn}(') is not None:
+            return fn
+    for fn in NUMERIC_CARRIERS:
+        body = matched(text, f'{fn}(')
+        if body is not None:
+            return numeric_type(first_argument(body))
+    left = arithmetic_left(text)
+    if left is not None:
+        return numeric_type(left)
+    return None
+
+
 def numeric (fn, inner):
     """signed(x) or unsigned(x), less the round trip when x is already
     that.
@@ -1753,16 +1859,14 @@ def numeric (fn, inner):
     Every conversion here hands back a std_logic_vector, so an operand
     that arrives already converted is wrapped straight back up again:
     signed(std_logic_vector(-signed(i_theta))) is three conversions
-    where the middle two cancel. Reading the type off the text is
-    enough, because the text is what the reader has to follow.
+    where the middle two cancel, and so is the unsigned() round a sum
+    of two resizes, which is what every (x + 1)[n-1:0] used to emit.
+    Reading the type off the text is enough, because the text is what
+    the reader has to follow.
     """
-    head = f'std_logic_vector({fn}('
-    if inner.startswith(head) and inner.endswith('))'):
-        return inner[len('std_logic_vector('):-1]
-    if inner.startswith('std_logic_vector(') and inner.endswith(')'):
-        body = inner[len('std_logic_vector('):-1]
-        if body.startswith(f'-{fn}(') or body.startswith(f'{fn}('):
-            return body
+    body = matched(inner, 'std_logic_vector(')
+    if body is not None and numeric_type(body) == fn:
+        return body
     return f'{fn}({inner})'
 
 
@@ -1804,10 +1908,11 @@ def vhdl_binop (ctx, e):
         if b.op == 'const' or (b.op == 'ref' and b.value in ctx.int_names):
             amt = vhdl_expr(ctx, b, index = True)
         else:
-            amt = f'to_integer(unsigned({vhdl_expr(ctx, b)}))'
+            amt = (f'to_integer('
+                   f'{numeric("unsigned", vhdl_expr(ctx, b))})')
         left = as_unsigned(ctx, a)
         if e.signed or a.signed:
-            left = f'signed({vhdl_expr(ctx, a)})'
+            left = numeric('signed', vhdl_expr(ctx, a))
         return f'std_logic_vector({fn}({left}, {amt}))'
     return f'({vhdl_expr(ctx, a)} {op} {vhdl_expr(ctx, b)})'
 
@@ -2012,9 +2117,11 @@ def vhdl_slice (ctx, e):
             # indexed; a type conversion may not, hence no
             # std_logic_vector() around it.
             low = e.value[1] if len(e.args) < 3 else 0
-            return f'resize(unsigned({inner}), {low + 1})({low})'
+            return (f'resize({numeric("unsigned", inner)}, '
+                    f'{low + 1})({low})')
         size = vhdl_cast_size(ctx, e) or str(e.width)
-        return f'std_logic_vector(resize(unsigned({inner}), {size}))'
+        return (f'std_logic_vector(resize({numeric("unsigned", inner)}, '
+                f'{size}))')
     if len(e.args) >= 3:
         hi = vhdl_index(ctx, e.args[1])
         lo = vhdl_index(ctx, e.args[2])
