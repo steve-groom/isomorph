@@ -311,10 +311,9 @@ and it works:
     export GHDL_PREFIX=/usr/lib/ghdl/llvm/vhdl
     yosys -m ghdl -p "ghdl --std=08 build/thing/thing.vhd -e thing"
 
-Isomorph's own equivalence tests find that directory themselves, by
-looking for the one with ieee/v08 under it, so nothing has to be set
-for `python3 -m pytest` to work. This is only for driving yosys by
-hand.
+isomorph finds that directory itself, by looking for the one with
+ieee/v08 under it, so nothing has to be set for the equivalence check
+to work. This is only for driving yosys by hand.
 
 Ask what this machine has:
 
