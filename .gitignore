@@ -19,10 +19,8 @@ DATAFLOW.md
 SPEC.txt
 HOUSE_STYLE.md
 
-# cores kept on disk and out of the repository. sbc4_core stays: it is
-# a toy and it is the one the construct tests use
-tests/cores/*
-!tests/cores/NOTES.txt
-!tests/cores/sbc4_core.py
-tests/test_cpu_sim.py
-tests/test_cpu_verilator.py
+# the test suite is kept on disk and out of the repository. It is
+# written against designs invented for it, but a test is where a real
+# design gets used as an example and the names in one are not mine to
+# publish
+tests/
