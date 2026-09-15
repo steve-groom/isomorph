@@ -14,9 +14,9 @@ else can be repaired without deciding something.
   - no default painted on a register in a clocked process and then
     overridden
 
-This is the layout half of HOUSE_STYLE.md. The rules the converter
-enforces, and the ones only a person can, are in that document; these
-are the ones a machine can settle on its own, so it does.
+These are the layout rules a machine can settle on its own, so it
+does. What a block should look like beyond them is a matter for
+whoever is writing it.
 """
 import ast
 import os

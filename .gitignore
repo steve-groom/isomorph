@@ -18,6 +18,7 @@ PARAMETERS.md
 DATAFLOW.md
 SPEC.txt
 HOUSE_STYLE.md
+examples/house_style.py
 
 # the test suite is kept on disk and out of the repository. It is
 # written against designs invented for it, but a test is where a real
