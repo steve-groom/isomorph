@@ -292,10 +292,15 @@ class Analyser:
             dom[name] = before | clocks
             return True
 
+        from .emit_c99 import alias_source, clocked_by
+
         for p in mod.processes:
             if p.kind == 'ff' and p.clock:
+                # the clock may be a name this module gave the real one
+                # on its way past, and a rename is not a domain of its
+                # own, so a flop stamps what its clock resolves back to
                 for name in body_writes(p.body):
-                    add(name, {p.clock})
+                    add(name, {clocked_by(mod, p)})
         # an instance hands back its child's domains, renamed to what
         # this module calls those clocks
         for inst in mod.instances:
@@ -308,7 +313,11 @@ class Analyser:
                 for clock in clocks:
                     carried = inst.ports.get(clock)
                     if carried is not None and carried.op == 'ref':
-                        outer.add(str(carried.value).split('[')[0])
+                        # resolve before dropping the index: the element
+                        # of an array gathered from a pin is a rename of
+                        # that pin, and the array is not a domain
+                        name = alias_source(mod, str(carried.value))
+                        outer.add(name.split('[')[0])
                 add(str(actual.value).split('[')[0], outer)
         changed = True
         rounds = 0
@@ -407,6 +416,8 @@ class Analyser:
 
     def instance_crossings (self, mod, dom, width):
         """A child on one clock handed a value another clock drives."""
+        from .emit_c99 import alias_source
+
         found = []
         for inst in mod.instances:
             formals = self.child_clocks.get(inst.module, set())
@@ -414,7 +425,8 @@ class Analyser:
             for formal in formals:
                 actual = inst.ports.get(formal)
                 if actual is not None and actual.op == 'ref':
-                    here.add(str(actual.value).split('[')[0])
+                    name = alias_source(mod, str(actual.value))
+                    here.add(name.split('[')[0])
             if not here:
                 continue
             directions = self.child_directions.get(inst.module, {})
