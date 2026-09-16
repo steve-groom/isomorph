@@ -587,12 +587,17 @@ def eval_tick_lines (m, by_name):
 
 
 def module_clocks (m):
+    """The domains this module clocks on, a renamed clock counting as
+    the one it was renamed from."""
     out = []
     seen = set()
     for p in m.processes:
-        if p.kind == 'ff' and p.clock and p.clock not in seen:
-            seen.add(p.clock)
-            out.append(p.clock)
+        if p.kind != 'ff' or not p.clock:
+            continue
+        name = clocked_by(m, p)
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
     return out
 
 
@@ -695,6 +700,16 @@ def _writes (stmt, name):
     return False
 
 
+def clocked_by (m, process):
+    """The domain a clocked process belongs to.
+
+    Its clock may be a name the module gave the real one on its way
+    past, and a rename is not a domain of its own, so the process
+    belongs to whatever the name resolves back to.
+    """
+    return alias_source(m, process.clock)
+
+
 def alias_source (m, name):
     """The name a clock really comes from, through this module's wires.
 
@@ -777,7 +792,7 @@ def posedge_lines (m, by_name, clock):
     for p in m.processes:
         if p.kind != 'ff':
             continue
-        if clock is not None and p.clock != clock:
+        if clock is not None and clocked_by(m, p) != clock:
             continue
         lines.append(f'    {m.name}_{p.name}(s);')
     for inst in m.instances:

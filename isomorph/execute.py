@@ -5,7 +5,7 @@ tick() is eval, posedge, NBA commit, eval. Combinational loops that
 do not settle in SETTLE_LIMIT passes are an error.
 """
 from . import ir
-from .emit_c99 import (SETTLE_LIMIT, ff_driven_names,
+from .emit_c99 import (SETTLE_LIMIT, ff_driven_names, clocked_by,
                        hierarchy_clocks, outer_clock, alias_source)
 from .signal import IsomorphError
 
@@ -234,7 +234,7 @@ class Executor:
         for p in store.m.processes:
             if p.kind != 'ff':
                 continue
-            if clock is not None and p.clock != clock:
+            if clock is not None and clocked_by(store.m, p) != clock:
                 continue
             run_stmts(ctx, p.body)
         for inst in store.m.instances:
