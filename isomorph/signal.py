@@ -451,6 +451,24 @@ def current_guard ():
     return guard_stack[-1] if guard_stack else None
 
 
+def synchronous (data, clock):
+    """Say that data arriving here is launched by this clock.
+
+    A pin whose data comes back timed to a clock this design sent out
+    is not a crossing: an SPI master drives sclk, the part answers on
+    miso, and both edges descend from the one clock. Nothing in the
+    design says so, because the loop leaves the device and comes back,
+    so the designer says it here and the crossing check believes it.
+
+    This is not a synchroniser. A synchroniser resolves metastability
+    on a genuinely asynchronous input and is a path a timing
+    constraint has to name; this says there was never a crossing, and
+    the constraint that matters is the round trip's input delay.
+    """
+    data.attributes['synchronous_to'] = clock
+    return data
+
+
 def preload (array, values, base = 'dec'):
     """The contents a memory holds when the device is configured.
 

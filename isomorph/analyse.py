@@ -294,6 +294,14 @@ class Analyser:
 
         from .emit_c99 import alias_source, clocked_by
 
+        # a pin the designer says is launched by one of this design's
+        # clocks is in that clock's domain: the loop that makes it so
+        # leaves the device and comes back, so nothing here can see it
+        for port in mod.ports:
+            told = (port.attributes or {}).get('synchronous_to')
+            if told is not None:
+                add(port.name, {alias_source(mod, self.name_of(told))})
+
         for p in mod.processes:
             if p.kind == 'ff' and p.clock:
                 # the clock may be a name this module gave the real one
