@@ -605,7 +605,11 @@ def hierarchy_clocks (m, by_name):
     synchroniser does, has no process of its own on it, so without this
     it gets no clock function and the simulator either does nothing on
     that edge or clocks everything on it."""
-    out = list(module_clocks(m))
+    out = []
+    for name in module_clocks(m):
+        name = alias_source(m, name)
+        if name not in out:
+            out.append(name)
     for inst in m.instances:
         child = by_name.get(inst.module)
         if child is None:
@@ -625,34 +629,88 @@ def hierarchy_clocks (m, by_name):
 
 
 def assign_name (target):
-    """The plain name a continuous assignment writes, or None."""
-    if getattr(target, 'op', None) == 'ref':
+    """The plain name a continuous assignment writes, or None.
+
+    An element of an array is a name too: signals() calls them
+    clocks[0] and clocks[1], which is what the rest of the simulator
+    knows them by."""
+    op = getattr(target, 'op', None)
+    if op == 'ref':
         return target.value
+    if op == 'bit' and len(getattr(target, 'args', ())) == 2:
+        base, index = target.args
+        if (getattr(base, 'op', None) == 'ref'
+                and getattr(index, 'op', None) == 'const'
+                and isinstance(index.value, int)):
+            return f'{base.value}[{index.value}]'
     return None
+
+
+def copied_from (m, name):
+    """What `name` is a plain copy of here, or None.
+
+    Either a continuous assignment or a combinational process that does
+    nothing to it but pass another signal through. A process is only a
+    rename if that is the sole thing it writes to this name and it
+    writes it unconditionally: anything under an if, or written twice,
+    is logic and not a wire.
+    """
+    for a in m.assigns:
+        if assign_name(a.target) == name:
+            if getattr(a.value, 'op', None) == 'ref':
+                return a.value.value
+            return None
+    for p in m.processes:
+        if p.kind != 'comb':
+            continue
+        found = None
+        for st in p.body:
+            if not isinstance(st, ir.Assign):
+                if _writes(st, name):
+                    return None
+                continue
+            if assign_name(st.target) != name:
+                continue
+            if found is not None:
+                return None
+            if getattr(st.value, 'op', None) != 'ref':
+                return None
+            found = st.value.value
+        if found is not None:
+            return found
+    return None
+
+
+def _writes (stmt, name):
+    """Whether a statement writes `name` anywhere inside it."""
+    if isinstance(stmt, ir.Assign):
+        return (assign_name(stmt.target) == name)
+    branches = getattr(stmt, 'branches', None)
+    if branches is None:
+        return False
+    for _, body in branches:
+        for inner in body:
+            if _writes(inner, name):
+                return True
+    return False
 
 
 def alias_source (m, name):
     """The name a clock really comes from, through this module's wires.
 
-    assign(pll0_clocks[0], lambda: pll0_clock0) is a wire, and a wire
-    is not a clock domain of its own. A board takes one clock pin and
-    hands it to a block that wants an array of them, or renames it on
-    the way past, and a simulator that knows clocks by name would
-    otherwise make the wire a domain nothing drives and ignore the pin
-    that does.
+    A clock arrives on a pin and is often renamed on the way past:
+    assign(pll0_clocks[0], lambda: pll0_clock0), or a comb process
+    saying system_clock.next = pll0_clock0 because that is what it is
+    on this board. A rename is not a clock domain of its own, and a
+    simulator that knows clocks by name would otherwise make the new
+    name a domain nothing drives and not recognise the pin that does.
     """
     if m is None:
         return name
     seen = set()
     while name not in seen:
         seen.add(name)
-        nxt = None
-        for a in m.assigns:
-            if assign_name(a.target) != name:
-                continue
-            if getattr(a.value, 'op', None) == 'ref':
-                nxt = a.value.value
-            break
+        nxt = copied_from(m, name)
         if nxt is None:
             break
         name = nxt

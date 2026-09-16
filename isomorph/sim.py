@@ -153,7 +153,8 @@ class Simulator:
 
     def add_clock (self, period, clock = None):
         ns = max(1, int(round(float(period) / 1e-9)))
-        name = self._name(clock) if clock is not None else self.clock_name
+        name = (self._clock_name(clock) if clock is not None
+                else self.clock_name)
         if name is not None:
             if self.clocks.get(name) != ns:
                 # a new or changed period restarts this clock's phase
@@ -255,7 +256,7 @@ class Simulator:
                 self.posedge(clock)
             return Cycles(repeat)
         if isinstance(clock, (list, tuple, set)):
-            names = [self._name(c) for c in clock]
+            names = [self._clock_name(c) for c in clock]
             if not names:
                 raise SimError('posedge([]) has no clock to take')
             self._run_checks('edge')
@@ -271,7 +272,7 @@ class Simulator:
             self._dump()
             return Cycles(1)
         self._run_checks('edge')
-        clk = self._name(clock) if clock is not None else None
+        clk = self._clock_name(clock) if clock is not None else None
         if self._python is not None:
             self._python.posedge(clk)
         else:
@@ -297,7 +298,7 @@ class Simulator:
         periods.
         """
         n = int(n)
-        clk = self._name(clock) if clock is not None else None
+        clk = self._clock_name(clock) if clock is not None else None
         if clk is None and len(self.domains) > 1:
             named = ', '.join(sorted(self.domains))
             raise SimError(
@@ -451,6 +452,20 @@ class Simulator:
         if self.log_fp is not None:
             self.log_fp.close()
             self.log_fp = None
+
+    def _clock_name (self, key):
+        """A clock by any of its names.
+
+        A clock is often renamed on its way past - system_clock is what
+        this board calls pll0_clock0 - and a bench that says either
+        means the one clock. The domain is the pin it came from, so
+        that is what the name resolves to.
+        """
+        name = self._name(key)
+        if name in self.domains:
+            return name
+        from .emit_c99 import alias_source
+        return alias_source(self.top, name)
 
     def _name (self, key):
         if isinstance(key, str):
