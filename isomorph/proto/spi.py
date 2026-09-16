@@ -4,8 +4,8 @@ from ..execute import SimError
 
 
 class Spi (Check):
-    """cs_n active-low. Mode 0/3 sample on the leading sclk edge
-    inside a selected frame. Incomplete bytes on cs_n rise fail."""
+    """ss_n active-low. Mode 0/3 sample on the leading sclk edge
+    inside a selected frame. Incomplete bytes on ss_n rise fail."""
 
     name = 'spi'
 
@@ -29,14 +29,14 @@ class Spi (Check):
             self.prev_cs = 1
             self.prev_sclk = 0 if self.mode in (0, 1) else 1
             return
-        cs = self.get(sim, 'cs_n', 1)
+        cs = self.get(sim, 'ss_n', 1)
         sclk = self.get(sim, 'sclk', 0)
         if self.prev_cs and not cs:
             self.bits = 0
         if not self.prev_cs and cs:
             if self.bits % 8:
                 self.fail(sim, 'SPI-X01',
-                          f'cs_n rose after {self.bits} bits, not a byte')
+                          f'ss_n rose after {self.bits} bits, not a byte')
             self.bits = 0
         if not cs and self._sample_edge(self.prev_sclk, sclk):
             self.bits += 1

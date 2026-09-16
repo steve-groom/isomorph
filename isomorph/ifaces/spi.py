@@ -3,7 +3,7 @@
 One bundle whichever end of the wire you are: a master and a slave
 carry the same four pins and isomorph reads the direction from what
 drives what, so there is nothing for separate factories to say. The
-select is cs_n, which is what the SPI checker looks for and what the
+select is ss_n, which is what the SPI checker looks for and what the
 memory pin factories here already call it.
 
 A chip select is active low, so whatever drives it holds it high
@@ -20,7 +20,7 @@ def spi (tristate = False):
     """Four-wire SPI. `tristate` splits miso into o, oe and i, which
     is what a slave sharing the line with others needs."""
     bus = SimpleNamespace(
-        cs_n = signal(),
+        ss_n = signal(),
         sclk = signal(),
         mosi = signal(),
     )
