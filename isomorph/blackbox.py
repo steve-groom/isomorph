@@ -23,7 +23,7 @@ written, and the real thing is handed to the fitter separately.
 Directions are declared rather than inferred, because there is no
 body to infer them from. Every declared port is connected, an output
 the design does not want with open_port(), and an input may not be
-left open, which is the rule ordinary instances follow (SPEC 3.8).
+left open, which is the rule ordinary instances follow.
 
 No model of it goes in the @block tree. A Python stand-in for a
 memory would mean the simulated hierarchy and the fitted hierarchy
@@ -55,9 +55,8 @@ class BlackboxType:
                 'at the top level and generates the buffer in the '
                 'Interface Designer, which is why isomorph.ifaces spells '
                 'a memory bus dq_o, dq_oe, dq_i. Quartus, Vivado and '
-                'Lattice all take an inout at the top instead, and a '
-                'bidirectional port that emits the right shape for each '
-                'is ROADMAP item 14.')
+                'Lattice all take an inout at the top instead, and no '
+                'bidirectional port emits the right shape for each.')
         self.module = module
         self.inputs = dict(inputs or {})
         self.outputs = dict(outputs or {})
@@ -68,7 +67,7 @@ class BlackboxType:
             raise IsomorphError(
                 f'blackbox {module}: ' + ', '.join(sorted(both))
                 + ' is declared an input and an output. A port that is '
-                'read and driven wants two ports (SPEC 4.1).')
+                'read and driven wants two ports.')
         if not self.inputs and not self.outputs:
             raise IsomorphError(
                 f'blackbox {module}: no ports. Declare them with '

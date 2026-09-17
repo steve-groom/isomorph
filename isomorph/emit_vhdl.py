@@ -1,6 +1,6 @@
 """VHDL-2008 emitter: IR modules to synthesizable VHDL.
 
-Ports and signals are std_logic / std_logic_vector (SPEC 4.2, 11).
+Ports and signals are std_logic / std_logic_vector.
 numeric_std unsigned/signed appear only inside expressions that need
 arithmetic, never as port or signal types. Hierarchy is preserved:
 one entity/architecture per IR module, named direct instantiations.
@@ -1042,7 +1042,7 @@ def signal_lines (m):
 
 
 def attribute_lines (m):
-    """Vendor attributes on signals (SPEC 5.4, 5.12).
+    """Vendor attributes on signals.
 
     An attribute the entity already declared for a port is visible
     here, and redeclaring it is an error."""
@@ -1126,7 +1126,7 @@ class Context:
         self.sig_width = {}
         self.sig_kind = {}
         # how each width was written, so a process variable follows the
-        # generic its signal follows (PARAMETERS.md stage 3)
+        # generic its signal follows
         self.sig_expr = {}
         self.sig_varying = {}
         # what declared the name, for the things width and kind alone
@@ -1563,7 +1563,7 @@ def assert_lines (ctx, s, indent, trailing):
 
     VHDL has nine-valued logic and starts a register at 'U'; the
     Python model, the C99 one and Verilator all start it at zero.
-    Isomorph emits no power-on value on purpose (SPEC 3.3), so before
+    Isomorph emits no power-on value on purpose, so before
     a reset an invariant over a register nothing has written compares
     false here and true on the other three, and the assertion fires
     on all four backends but one. Measured: stream_from_memory's 'a
@@ -2145,8 +2145,8 @@ def operand_size (ctx, nodes, target):
 def extend_size (ctx, e, inner):
     """How wide the widening goes, as the author wrote it.
 
-    The SystemVerilog half of this has read width_expr since stage 3
-    of the parameters work and the VHDL half never did, so an entity
+    The SystemVerilog half of this has read width_expr for a while
+    and the VHDL half never did, so an entity
     with a generic resized to the number this build elaborated with:
     resize(unsigned(x), 17) where the target is WIDTHH downto 0. One
     override and the lengths do not match.

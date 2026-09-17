@@ -17,7 +17,7 @@ class Expr:
     line: int = 0
     base: str = None           # 'hex', 'bin', 'oct': how it was written
     # for an extend: how the target's width was written, so the cast
-    # follows the generic instead of folding (PARAMETERS.md stage 3)
+    # follows the generic instead of folding
     width_expr: str = None
     # a literal beside a named constant: both languages do that
     # arithmetic at integer width, so the literal carries no size
@@ -116,7 +116,7 @@ class Sig:
     comments: list = field(default_factory = list)
     trailing: str = None
     # how the width was written, when it was an expression over the
-    # module's parameters rather than a number (SPEC 3.6, 4.1)
+    # module's parameters rather than a number
     width_expr: str = None
     # and how the element count was written, for an array
     array_expr: str = None
@@ -187,7 +187,7 @@ class Instance:
     line: int = 0
     comments: list = field(default_factory = list)
     params: dict = field(default_factory = dict)   # overrides, if any
-    # one of an array built by a loop (SPEC 5.15). Every backend that
+    # one of an array built by a loop. Every backend that
     # runs a design sees the members one at a time, named array[k];
     # the two HDL emitters collapse them back into one generate.
     array: str = None          # the array's name, or None
@@ -199,7 +199,7 @@ class Instance:
                                # ('index', base name)
     # built inside a when(), so the HDL emitters put it in an
     # if ... generate and the three simulators leave it out when the
-    # condition it was written against is false (SPEC 5.16).
+    # condition it was written against is false.
     guard: str = None          # the condition as it was written
     guard_on: bool = True      # what that condition came to
     # what the instance drove, so the arm that leaves it out can hold
@@ -226,10 +226,10 @@ class Module:
     blackbox: bool = False
     blackbox_source: str = None
     # every clock-domain crossing in the design, on the top module
-    # only: what a timing constraint has to name (ROADMAP item 7)
+    # only: what a timing constraint has to name
     crossings: list = field(default_factory = list)
     # what each constant was written as, where that was an expression
-    # rather than a number: name -> source text (PARAMETERS.md stage 1)
+    # rather than a number: name -> source text
     constant_exprs: dict = field(default_factory = dict)
     # name -> (base, digits) for a constant written 0x, 0b or 0o, so
     # the HDL can be read the way the Python was

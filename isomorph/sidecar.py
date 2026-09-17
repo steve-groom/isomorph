@@ -1,4 +1,4 @@
-"""JSON sidecar of analysed modules (SPEC 7, SIM_PLAN S1)."""
+"""JSON sidecar of analysed modules."""
 import json
 import os
 

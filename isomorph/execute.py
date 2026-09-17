@@ -1,4 +1,4 @@
-"""IR interpreter: cycle-accurate smoke matching SPEC 6.
+"""IR interpreter: a cycle-accurate smoke test of the design.
 
 Walks the analysed IR. Not the original Python process functions.
 tick() is eval, posedge, NBA commit, eval. Combinational loops that

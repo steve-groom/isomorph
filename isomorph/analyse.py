@@ -1,6 +1,6 @@
 """Read process, assign and function bodies as Python ASTs and produce
-the typed IR of ir.py, applying the width rules (4.2), the assignment
-rule (4.3) and the checks (4.7) of SPEC.txt."""
+the typed IR of ir.py, applying the width rules, the assignment rule
+and the checks that go with them."""
 import ast
 import inspect
 import textwrap
@@ -65,7 +65,7 @@ class Analyser:
         self.sync_inputs = set()
         self.crossings = []
         # how each signal's width was written, for a cast that has to
-        # follow the generic rather than fold (PARAMETERS.md stage 3)
+        # follow the generic rather than fold
         self.width_exprs = {}
         for name, sig in list(getattr(elaborated, 'signals', {}).items()) \
                 + list(getattr(elaborated, 'arrays', {}).items()):
@@ -548,7 +548,7 @@ class Analyser:
 
         A list of children used to become cells_0, cells_1 and so on:
         names nobody typed, which is the MyHDL behaviour this project
-        was a reaction to and which SPEC 4.5 forbids. They are
+        was a reaction to, and which this one forbids. They are
         cells[0], cells[1] now, and the emitters write them back as
         one labelled generate, so the only name invented is the
         instance label inside the loop body.
@@ -680,7 +680,7 @@ class Analyser:
                     'array, or a list built from one, is a wire here only '
                     'if it is a whole array: pass the array itself, or '
                     'give the child one element at a time. Connecting '
-                    'part of an array is ROADMAP item 11.',
+                    'part of an array is not supported.',
                     self.file, child.line)
             ports[formal] = ir.Expr('ref', actual.width, value = aname)
             self.read.add(aname.split('[')[0])
@@ -717,7 +717,7 @@ class Analyser:
         return node
 
     def check_names (self, m):
-        """SPEC 4.5: reserved words and VHDL case-insensitive uniqueness.
+        """Reserved words, and uniqueness in a VHDL that ignores case.
 
         Checks the names that will appear in HDL, not Python bundle
         parameter names (bus -> bus_data / bus_ack).
@@ -738,7 +738,7 @@ class Analyser:
                     f'{base} ({role}) collides with {prev[0]} ({prev[1]}) '
                     f'in VHDL; VHDL names are case-insensitive and the '
                     f'same identifiers are emitted to SystemVerilog. '
-                    f'Rename one of them (SPEC 4.5)',
+                    f'Rename one of them',
                     self.file, line or prev[2])
             claimed[key] = (base, role, line)
 
@@ -760,7 +760,7 @@ class Analyser:
                         f'{member.name} is a member of both {owner} and '
                         f'{name}. An enumeration member is a name in the '
                         f'module, so the two collide; give one of them a '
-                        f'prefix (SPEC 4.5)',
+                        f'prefix',
                         self.file, getattr(enum_type, 'line', None))
                 member_of[member.name] = name
                 claim(member.name, 'enumeration',
@@ -1124,7 +1124,7 @@ class Analyser:
         is right at one width and wrong at every other, so overriding
         the generic gives a design Verilator refuses. The expression
         is checked here, where the module's own names are known, and
-        each emitter spells it its own way (PARAMETERS.md stage 3).
+        each emitter spells it its own way.
         """
         if target.op != 'ref':
             return None
@@ -1164,8 +1164,8 @@ class Analyser:
                 # and the assignment reads as a truncation, which is
                 # what Verilator called WIDTHTRUNC on byte_count <=
                 # BYTES_A. Say the width here instead of relying on
-                # the tool's context rules, which is what SPEC 4.2
-                # asks for everywhere else. VHDL already said it.
+                # the tool's context rules, which is what this
+                # converter does everywhere else. VHDL already said it.
                 #
                 # A hexed() parameter is a vector of a stated width in
                 # both languages, so it says its own width already and
@@ -1853,7 +1853,7 @@ class Analyser:
 
     def check_rbw (self, body, driven, proc):
         """No read of a combinational signal this process drives before
-        that signal is assigned on this path (SPEC 4.7)."""
+        that signal is assigned on this path."""
         driven = {n.split('[')[0] for n in driven}
 
         def refs (e):
@@ -1997,7 +1997,7 @@ class Analyser:
                 'build it)')
 
     def check_unused (self, mod):
-        """Every name that is not connected at both ends (SPEC 4.7).
+        """Every name that is not connected at both ends.
 
         There are three ways a name can be wrong and this used to
         catch one of them. It asked whether a name was read or driven,
@@ -2282,7 +2282,7 @@ def source_comments (func):
 
 
 def header_comment (func):
-    """The block's docstring, or failing that its module's (SPEC 4.1).
+    """The block's docstring, or failing that its module's.
 
     One block per file is the house style, so a file whose docstring
     describes the design gets that text as the module header."""
@@ -2322,7 +2322,7 @@ def fatal_warnings (warnings):
     return out
 
 
-# What the fitters call the encodings, which is not what SPEC 5.4
+# What the fitters call the encodings, which is not what enum()
 # calls them. Measured on Quartus Prime 25.1std and Efinity 2026.1,
 # 2026-09-13, on a three-state machine:
 #
@@ -2336,8 +2336,7 @@ def fatal_warnings (warnings):
 # sequential, gray and johnson are spelt the same everywhere. The
 # Python spelling stays one_hot, because that is a Python name; only
 # what reaches the HDL changes. AMD Vivado documents one_hot with the
-# underscore and is not installed here, so it is untested and is
-# ROADMAP item 16.
+# underscore and is not installed here, so it stays untested.
 VENDOR_ENCODING = {'one_hot': 'onehot'}
 
 
@@ -2497,8 +2496,7 @@ def port_width_name (text):
     Exactly `len(port)` or `len(bundle.member)`. Anything else names
     no single port: `max(len(i_data_a), len(i_data_b))` is a width
     derived from two of them and gives neither a name, and a generic
-    isomorph named for itself would be the cells_0 of SPEC 4.5 in a
-    different hat. A block that wants to be reusable says so by
+    isomorph named for itself would be cells_0 in a different hat. A block that wants to be reusable says so by
     naming its widths.
     """
     try:
@@ -2553,14 +2551,14 @@ def promote_port_widths (mod):
     `WIDTHD = len(i_data)` is not just a constant. It is the author
     giving that port's width a name, and a name is the one thing the
     converter cannot invent for itself, so this is the whole hinge of
-    PARAMETERS.md stage 2. The port then declares [WIDTHD-1:0], one
+    the whole hinge of this. The port then declares [WIDTHD-1:0], one
     module serves every width, and a VHDL team can be handed the file
     rather than a regenerated blob per size.
 
     The value has to be the width the port really has, or the name is
     not naming what it looks like it names and the number goes out
     instead. An array port is left alone: its element type carries the
-    width in VHDL and that is PARAMETERS.md stage 4.
+    width in VHDL, and that is a separate job.
     """
     by_name = {}
     for port in mod.ports:

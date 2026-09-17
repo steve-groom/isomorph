@@ -14,7 +14,8 @@ their path - the instance chain_gain, the wire chain_gain_out_valid -
 so the fitter report reads as the Python does.
 
 This runs once and leaves only instances and wires behind. It is the
-generate-by-Python of SPEC 3.11 applied to dataflow, and it reads
+generate-by-Python this converter is built on, applied to
+dataflow, and it reads
 nothing it was not given: a stage is a block, a name and parameters,
 and anything else is an error naming the stage. A stage whose output
 is wider or narrower than its input says so with out_width.

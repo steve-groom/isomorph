@@ -3,7 +3,7 @@
 Each output takes the beat once, in whichever order the two are ready,
 and the input advances when both have. Two flops remember which side
 has taken the current beat. Cascade for more than two; an N-way form
-waits on arrays of bundle ports (SPEC 5.15).
+waits on arrays of bundle ports.
 """
 from isomorph import (block, signal, signals, enum, always_ff,
     always_ff_async_reset, always_comb, assign, concat, replicate, bits,

@@ -1,6 +1,6 @@
 """Run a block once and collect what it declared: ports, signals,
 constants, enumerations, functions, processes, continuous assignments
-and child instances. Section 3.2, 3.8 and 4.1 of SPEC.txt."""
+and child instances."""
 import functools
 import hashlib
 import inspect
@@ -38,8 +38,8 @@ def _name_part (value):
 def _join_name (block_name, parts):
     """A block name with the values that tell this build from another.
 
-    Single underscores: VHDL forbids consecutive ones, and SPEC 4.5
-    keeps the same identifier in SystemVerilog, VHDL and C99. Four
+    Single underscores: VHDL forbids consecutive ones, and one
+    identifier has to serve SystemVerilog, VHDL and C99 alike. Four
     thirty-two bit constants spell out to seventy-three characters,
     which puts a VHDL instantiation past the column the house style
     keeps to and makes a file name nobody can read, so past the limit
@@ -130,7 +130,8 @@ def _tell_apart (block_name, shapes):
 
     Nothing is invented. Every part of every name is a name the author
     typed and a value the design really built, never an ordinal: the
-    cells_0 of SPEC 4.5 is what this exists to avoid.
+    cells_0 of a tool naming things for you is what this exists
+    to avoid.
     """
     order = list(shapes)
     names = {s: shapes[s][0]._built_name for s in order}
@@ -314,8 +315,8 @@ class Elaborated:
                     elif isinstance(element, (Elaborated, Blackbox)):
                         # array[k], not array_k. The index is one the
                         # author wrote; an underscore and a number is a
-                        # name invented on their behalf, which SPEC 4.5
-                        # says does not happen. The analyser checks the
+                        # name invented on their behalf, which is
+                        # the one thing this converter never does. The analyser checks the
                         # array is regular enough to emit as a generate
                         # and refuses it otherwise.
                         iname = f'{name}[{element_index(children, element)}]'

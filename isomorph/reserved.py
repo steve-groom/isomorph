@@ -1,6 +1,6 @@
 """Reserved identifiers for every output.
 
-SPEC 4.5: a Python name is the netlist (or C field) name in
+A Python name is the netlist (or C field) name in
 SystemVerilog, VHDL and the C99 smoke. Convert checks all of them on
 every run, even if only one output is requested. A clash is an error,
 not a silent rename.
@@ -81,15 +81,14 @@ def clash_message (name):
         return (f'{base} is not a legal VHDL identifier: a name starts '
                 'with a letter and has no double or trailing underscore; '
                 'isomorph names must be legal in SystemVerilog, VHDL and '
-                'C99 (SPEC 4.5)')
+                'C99')
     if base.lower() in VHDL_RESERVED:
         return (f'{base} is a VHDL reserved word; isomorph names must '
-                'be legal in SystemVerilog, VHDL and C99 (SPEC 4.5)')
+                'be legal in SystemVerilog, VHDL and C99')
     if base in SV_RESERVED:
         return (f'{base} is a SystemVerilog reserved word; isomorph '
-                'names must be legal in SystemVerilog, VHDL and C99 '
-                '(SPEC 4.5)')
+                'names must be legal in SystemVerilog, VHDL and C99')
     if base in C99_RESERVED:
         return (f'{base} is a C99 reserved word; isomorph names must '
-                'be legal in SystemVerilog, VHDL and C99 (SPEC 4.5)')
+                'be legal in SystemVerilog, VHDL and C99')
     return None

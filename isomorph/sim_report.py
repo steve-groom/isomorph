@@ -1,4 +1,4 @@
-"""Deterministic points of interest from a cycle log (SIM_PLAN S8)."""
+"""Deterministic points of interest, picked out of a cycle log."""
 import json
 import os
 

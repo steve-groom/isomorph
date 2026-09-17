@@ -2,7 +2,7 @@
 
 The output keeps the input's structure: one module per IR module (leaves
 first), named processes, named functions, named instances, comments on
-the same items. Section 4 of SPEC.txt is the reference."""
+the same items."""
 import ast
 import re
 import textwrap
@@ -146,7 +146,7 @@ def body_key (m, wide = None):
     the question being asked. A width that follows a generic is the
     same text at every width while the IR still holds the number it
     elaborated with, so comparing the IR would never merge anything
-    that PARAMETERS.md stage 2 made mergeable.
+    a named width made mergeable.
 
     Both languages have to agree. VHDL still folds the operand
     widening inside arithmetic where SystemVerilog sizes the result
@@ -270,7 +270,7 @@ def merge_builds (modules):
 def emit_sv (modules):
     """SystemVerilog text for the module list, leaves first.
 
-    One file holds every module in the design (SPEC 7), so a bar to
+    One file holds every module in the design, so a bar to
     column 79 goes between them: with each module carrying its own
     header comment there is otherwise nothing to say where one ends
     and the next begins."""
@@ -375,7 +375,7 @@ def write_sv (modules, path):
 def lint_sv (path, top = None):
     """Run verilator --lint-only -Wall. Raises ConversionError on failure.
 
-    -Wno-DECLFILENAME: one file holds every module (SPEC 7), so only the
+    -Wno-DECLFILENAME: one file holds every module, so only the
     top name matches the filename.
 
     -Wno-UNUSEDSIGNAL and -Wno-PINCONNECTEMPTY: isomorph makes both of
@@ -669,7 +669,7 @@ def check_comment (text):
     Comments travel into the HDL, which is the point of them here, and
     that makes the first word of one load-bearing. This project says a
     Python name that is a reserved word in an output language is an
-    error rather than a silent rename (SPEC 4.5); the same applies to
+    error rather than a silent rename; the same applies to
     a comment that is a directive in an output language, and for the
     same reason: the alternative is rewriting what the author wrote.
     """
@@ -1010,7 +1010,7 @@ def array_init_sv (s):
 
     An unpacked array takes an assignment pattern, and that is what
     every FPGA tool reads to load a block RAM at configuration time. It
-    is not an initial block: SPEC 5.16 bans those for reset values, and
+    is not an initial block: those are banned for reset values, and
     this is not a reset value, it is what the device is programmed
     with."""
     if (len(set(s.init)) == 1 and len(s.init) > 1):

@@ -2,8 +2,7 @@
 
 Nothing here simulates. A Signal knows its width, kind and name; the
 process decorators record a Python function for the analyser to read as
-an AST; assign() records an expression the same way. Section 3 of
-SPEC.txt is the reference."""
+an AST; assign() records an expression the same way."""
 import ast
 import dis
 import inspect
@@ -76,8 +75,8 @@ def _written_as (index = 0, keyword = None):
     A width written as an expression over the block's parameters is
     kept as that expression, so signal(WIDTH - 1) can reach the HDL as
     [WIDTH-2:0] rather than as the [6:0] one elaboration happened to
-    produce. SPEC 3.6 already says a slice bound is emitted as written;
-    this is the same rule for a declaration.
+    produce. A slice bound is already emitted as it was written; this
+    is the same rule, for a declaration rather than a slice.
 
     None when there is nothing worth carrying: no source to read, or a
     plain number, which says no more than the width already does.
@@ -161,7 +160,7 @@ class EnumType:
         self._apply_encoding()
 
     def _apply_encoding (self):
-        """SPEC 5.4: auto keeps sequential values and no vendor
+        """auto keeps sequential values and no vendor
         attribute; the named encodings set member values."""
         n = len(self.members)
         enc = self.encoding
@@ -186,7 +185,7 @@ class EnumType:
             # nowhere else, so every state but the first still decodes
             # on one bit, and the first decodes on bit 0 being low,
             # which is also one bit. Both fitters here build exactly
-            # this, so the netlist agrees with the source (SPEC 5.4).
+            # this, so the netlist agrees with the source.
             self.width = max(1, n)
             for index, member in enumerate(self.members):
                 member.value = 0 if index == 0 else (1 << index) | 1
@@ -246,7 +245,7 @@ class Signal:
     (count + 1)[7:0] is the only way to write it."""
 
     # how the width was written, when that was an expression over the
-    # block's parameters rather than a number (ROADMAP item 9)
+    # block's parameters rather than a number
     width_expr = None
 
     def __init__ (self, width = 1, kind = 'vector', type = None):
@@ -343,7 +342,7 @@ def array_view (elements):
         raise IsomorphError(
             'an array port holds one width, and this one was given '
             + ', '.join(str(w) for w in sorted(widths))
-            + '. Elements of one array share a width (SPEC 5.15).')
+            + '. Elements of one array share a width.')
     view = SignalArray.__new__(SignalArray)
     list.__init__(view, elements)
     view.width = elements[0].width

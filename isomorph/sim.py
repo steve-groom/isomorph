@@ -1,4 +1,4 @@
-"""Simulator API over the Python executor and compiled C99 (SPEC 6)."""
+"""Simulator API over the Python executor and compiled C99."""
 import json
 import os
 import subprocess
@@ -40,7 +40,7 @@ class Cycles(int):
 
 
 class _Monitor:
-    """A plain function at the sample point (ROADMAP 10)."""
+    """A plain function, called at the sample point."""
 
     def __init__ (self, fn):
         self.fn = fn

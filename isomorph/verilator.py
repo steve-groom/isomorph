@@ -2,7 +2,7 @@
 
 The Python and C99 backends run isomorph's own model of the design.
 This one runs Verilator's, so it is the reference the other two are
-checked against (SPEC 6, 8.7). Verilator is a compiler, not a library,
+checked against. Verilator is a compiler, not a library,
 so a generated shim exposes the top module's ports through a small C
 interface and ctypes drives it.
 

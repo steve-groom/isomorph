@@ -1,4 +1,4 @@
-"""IEEE 1364-2001 VCD writer and a small parser (SIM_PLAN S3, S6)."""
+"""An IEEE 1364-2001 VCD writer, and a small parser for one."""
 
 
 class VcdWriter:

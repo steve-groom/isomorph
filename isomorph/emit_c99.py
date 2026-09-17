@@ -1,10 +1,10 @@
-"""C99 cycle-accurate smoke from the IR (SPEC 6.1).
+"""C99 cycle-accurate smoke from the IR.
 
 One struct per module, one function per process, uint64_t fields
 masked to width. tick() settles comb, runs clocked processes into
 *__nxt, commits, settles comb again. Not the design of record.
 The shadow has two underscores so that it can never be a name from the
-Python: VHDL forbids those, and convert refuses them (SPEC 4.5).
+Python: VHDL forbids those, and convert refuses them.
 """
 import os
 import shutil
@@ -34,7 +34,7 @@ def check_width (w, where):
     if w > 64:
         raise ConversionError(
             f'C99 smoke: {where} is {w} bits, and a C99 field is a '
-            'uint64_t (SPEC 6.1). Split the signal, or leave the C99 '
+            'uint64_t. Split the signal, or leave the C99 '
             'backend out and run this design with --run verilator, '
             'which has no width limit and is the design of record '
             'anyway.')

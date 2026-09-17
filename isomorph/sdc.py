@@ -1,4 +1,4 @@
-"""Timing constraints from the clocks and the crossings (ROADMAP 7).
+"""Timing constraints, from the clocks and the crossings.
 
 This writes a supplementary constraint file, not a replacement for the
 one a vendor tool generates. The Efinity Interface Designer already
