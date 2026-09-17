@@ -1,0 +1,39 @@
+sbc4_core.py migrated by hand from SBC4/sbc4_core.py (MyHDL) to isomorph.
+Every change the language or the width rules forced, 2026-09-09:
+
+- Import block: the isomorph names; Signal(intbv(0)[W:]) -> signal(W),
+  Signal(False) -> signal(), Signal(state.RESET) -> signal(state),
+  @always(i_clock.posedge) -> @always_ff(i_clock.posedge).
+- Verilog bit numbering: every slice is now inclusive, [WIDTHA-1:0] where
+  MyHDL had [WIDTHA:]; there are no open slices.
+- Opcode extraction: (opcode_word >> (4 * slot)) & 0xf, a shift by a
+  signal, is the part-select opcode_word[slot*4 + 3:slot*4] (SPEC 3.6).
+  Shift by a signal is a conversion error.
+- One-hot decode: concat(intbv(0)[7:], instr[3]) << instr[3:] (another
+  shift by a signal) is decode.next = 0 then decode.next[instr[2:0]] =
+  instr[3], a bit assignment with a signal index.
+- Add widths (SPEC 4.2, max + 1): slot + 1, pc + last_slot, sp + sp_inc
+  and rn + addend + op_inz are sliced to the target width explicitly,
+  e.g. (sp + sp_inc)[WIDTHA-1:0]. The adder no longer needs
+  concat(False, ...) to widen its operands.
+- sp_inc = (1 << WIDTHD) - 1 assigned to a WIDTHA-bit signal was a
+  silent truncation in MyHDL; it is replicate(True, WIDTHA).
+- next_sp = sp + sp_inc.signed(): the .signed() only served MyHDL's
+  Python arithmetic; the hardware is a modular add, written as such.
+- The INZ addend (rt >> WIDTHT) << WIDTHT is concat(rt[WIDTHD-1:WIDTHT],
+  replicate(False, WIDTHT)) under if (WIDTHT < WIDTHD), because at
+  WIDTHA = 29 there are no chain bits and the slice would be empty.
+- RESET_ADDRESS & ((1 << WIDTHA) - 1): the mask is gone; a constant that
+  does not fit the target is an error, so the constant is written to
+  fit.
+- Sign extension of the prefix chunk: concat(replicate(instr[2],
+  WIDTHD - 3), instr[2:0]), the replicate() the ip_library patch gave
+  MyHDL, now native.
+- fetch, execute, rn_zero and avmm.writedata became continuous
+  assignments (SPEC 3.10) instead of lines in decode_comb/precalc_comb.
+- fetch / execute renamed is_fetch / is_execute: VHDL is case-insensitive
+  and they collided with enumeration members FETCH / EXECUTE (SPEC 4.5).
+- The STACK_POINTER_OPS parameter is used as a constant if inside
+  decode_comb and is pruned at conversion (SPEC 3.11).
+Nothing else changed: the process structure, names and statement order
+are those of the MyHDL core.

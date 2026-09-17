@@ -20,8 +20,9 @@ SPEC.txt
 HOUSE_STYLE.md
 examples/house_style.py
 
-# the test suite is kept on disk and out of the repository. It is
-# written against designs invented for it, but a test is where a real
-# design gets used as an example and the names in one are not mine to
-# publish
-tests/
+# The test suite is published. The designs it runs on were invented
+# for it, bar one: the processor core under tests/cores/riscv is not
+# mine to publish, so it stays on disk with the two tests that use it.
+tests/cores/riscv
+tests/test_cpu_sim.py
+tests/test_cpu_verilator.py
