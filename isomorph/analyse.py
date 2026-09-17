@@ -1,6 +1,7 @@
 """Read process, assign and function bodies as Python ASTs and produce
 the typed IR of ir.py, applying the width rules, the assignment rule
 and the checks that go with them."""
+import dataclasses
 import ast
 import inspect
 import textwrap
@@ -1625,6 +1626,9 @@ class Analyser:
             if part is not None:
                 return part
             hi, lo, hi_e, lo_e = self.slice_bounds(sl, base, scope, node)
+            narrowed = narrow_binop(base, hi - lo, lo)
+            if narrowed is not None:
+                return narrowed
             return ir.Expr('slice', hi - lo, args = [base, hi_e, lo_e],
                            value = (hi, lo))
         index = self.constant_or_none(node.slice, scope)
@@ -2543,6 +2547,55 @@ def ports_measured (text, known):
         if name in known:
             found.add(name)
     return found
+
+
+def narrow_binop (base, width, lo):
+    """An arithmetic result taken straight back down to its own width,
+    as that arithmetic at that width. None if this is not that.
+
+    (count + 1)[23:0] is how the house style writes a 24-bit counter,
+    and it means what it says: the sum is one bit wider than what it
+    is made of, and the carry is thrown away. Emitted literally that
+    is three resizes in VHDL, two of them to a width nothing keeps:
+
+      std_logic_vector(resize(resize(unsigned(count), count'length + 1)
+        + resize(to_unsigned(1, 24), count'length + 1), 24))
+
+    where every language already wraps an addition at the width of the
+    thing it is assigned to. The value is identical either way, since
+    the executor masks a binop to its own width and the slice masks to
+    the same one, so the sum is simply asked for at 24 bits instead.
+
+    Only from bit zero: (a + b)[15:8] is a field of the answer and not
+    the answer, and it keeps its slice. Only where the width really
+    comes down, which is the widening this undoes. The result is a
+    plain bit field, so it is unsigned however the operands were read:
+    the operands keep their own signedness and are unaffected.
+    """
+    if lo != 0 or base is None or getattr(base, 'op', None) != 'binop':
+        return None
+    # an add or a subtract only. Those are the two the width rule
+    # grows by exactly one, for the carry, and that one bit is what
+    # this gives back. A multiply grows to the sum of its operands and
+    # a shift grows by the distance it shifts, so cutting either of
+    # those down is a truncation and it keeps its cast
+    if base.value not in ('+', '-'):
+        return None
+    # exactly the carry bit, off operands that are both already the
+    # width of the answer. Anything narrower coming out is a
+    # truncation, and a narrower operand going in is an extension:
+    # both are said out loud rather than left to a tool's context
+    # rules, and Verilator calls the second one WIDTHEXPAND
+    if base.width != width + 1:
+        return None
+    if any(a.width != width for a in base.args):
+        return None
+    # not down to a single bit: one bit is a scalar in VHDL and not an
+    # array of one, so the sum would have nowhere to go, and there is
+    # nothing to save on a one-bit add anyway
+    if width < 2:
+        return None
+    return dataclasses.replace(base, width = width, signed = False)
 
 
 def promote_port_widths (mod):

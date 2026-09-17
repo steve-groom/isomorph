@@ -1379,9 +1379,13 @@ def process_lines (ctx, p):
     driven = [n for n in assigned_roots(p.body) if n in ctx.sig_width]
     driven.sort(key = lambda n: ctx.declared_at.get(n, len(ctx.declared_at)))
     needs_seed = seeded(p.body)
+    # only the signals this process reads back need standing in for
+    shadow = (shadowed(p.body) | needs_seed) & set(driven)
     lines.append(f'  {p.name} : process (all) is')
     var_map = {}
     for name in driven:
+        if name not in shadow:
+            continue
         vname = name + '_v'
         var_map[name] = vname
         width = ctx.sig_width[name]
@@ -1418,7 +1422,7 @@ def process_lines (ctx, p):
         lines.append(f'    variable {vname} : {typ};')
     lines.append('  begin')
     for name in driven:
-        if name in needs_seed:
+        if name in needs_seed and name in var_map:
             lines.append(f'    {var_map[name]} := {name};')
     saved = ctx.var_map
     ctx.var_map = var_map
@@ -1426,7 +1430,8 @@ def process_lines (ctx, p):
     lines += stmt_lines(ctx, p.body, 4)
     ctx.var_map = saved
     for name in driven:
-        lines.append(f'    {name} <= {var_map[name]};')
+        if name in var_map:
+            lines.append(f'    {name} <= {var_map[name]};')
     lines.append(f'  end process {p.name};')
     return lines
 
@@ -1980,8 +1985,8 @@ def vhdl_binop (ctx, e):
         return f'({vhdl_expr(ctx, a)} {vop} {vhdl_expr(ctx, b)})'
     if op in ('+', '-'):
         size = operand_size(ctx, (a, b), w)
-        left = f'resize({as_unsigned(ctx, a)}, {size})'
-        right = f'resize({as_unsigned(ctx, b)}, {size})'
+        left = addend(ctx, a, w, size)
+        right = addend(ctx, b, w, size)
         return f'std_logic_vector({left} {op} {right})'
     if op == '*':
         left = as_unsigned(ctx, a)
@@ -2056,6 +2061,66 @@ def vhdl_bit (ctx, e):
     return f'{base_t}(to_integer({as_unsigned(ctx, idx)}))'
 
 
+def shadowed (body):
+    """The driven signals that have to go through a variable at all.
+
+    A variable stands in for a signal because VHDL defers a signal
+    assignment to the end of the process, so a later read would see
+    the old value where SystemVerilog's blocking = sees the new one.
+    That only matters if the process reads the signal. Where it does
+    not - and a block of wiring, a decode, a mux over inputs never
+    does - a plain signal assignment says the same thing, because the
+    last assignment executed is the one that lands either way.
+
+    Said in full, nineteen wires came out as nineteen variables,
+    nineteen := and nineteen <= copying them back, for what is
+    nineteen lines of one signal driven by another.
+
+    A write to part of a signal keeps its variable. Driving one slice
+    and leaving the rest to a separate assignment is a shape worth
+    keeping whole, and it is rare enough not to be worth the argument.
+    """
+    read = set()
+    partial = set()
+
+    def reads (e):
+        if e is None or not hasattr(e, 'op'):
+            return
+        if e.op == 'ref':
+            read.add(str(e.value).split('[')[0])
+        for arg in (e.args or []):
+            reads(arg)
+
+    def walk (stmts):
+        for s in stmts or []:
+            if isinstance(s, ir.Assign):
+                reads(s.value)
+                target = s.target
+                whole = target.op == 'ref'
+                while target.op in ('slice', 'bit', 'part', 'part_down',
+                                    'field'):
+                    for arg in target.args[1:]:
+                        reads(arg)
+                    target = target.args[0]
+                if target.op == 'ref' and not whole:
+                    partial.add(str(target.value).split('[')[0])
+            elif isinstance(s, ir.If):
+                for cond, inner in s.branches:
+                    reads(cond)
+                    walk(inner)
+            elif isinstance(s, ir.Match):
+                reads(s.subject)
+                for _, inner in s.arms:
+                    walk(inner)
+            elif isinstance(s, ir.For):
+                walk(s.body)
+            elif isinstance(s, ir.Assert):
+                reads(s.cond)
+
+    walk(body)
+    return read | partial
+
+
 def seeded (body):
     """The driven signals whose variable has to start from the signal.
 
@@ -2112,6 +2177,36 @@ def seeded (body):
 
     walk(body, True)
     return {n for n, kind in first.items() if kind != 'write'}
+
+
+def addend (ctx, e, width, size):
+    """One side of an add, at the width the sum is taken at.
+
+    resize() only where it changes something, and a cast only where
+    there is something to cast. numeric_std adds a plain integer to an
+    unsigned or a signed directly, so a small constant goes in as the
+    number it is rather than as to_unsigned(1, 24) standing beside a
+    24-bit signal; and an operand already as wide as the sum is
+    already as wide as the sum. Both said in full, a counter reads
+
+      resize(unsigned(count), count'length) + resize(to_unsigned(1, 24),
+        count'length)
+
+    for what is unsigned(count) + 1.
+
+    A negative constant keeps the cast: an unsigned takes a natural on
+    the other side, and -1 is not one.
+    """
+    if (e.op == 'const' and not e.signed and fits_integer(e.value)
+            and int(e.value) >= 0):
+        return str(int(e.value))
+    text = as_unsigned(ctx, e)
+    # a single bit is a std_logic, and as_unsigned makes it an array by
+    # putting a '0' in front: two bits, whatever the IR says. So it is
+    # resized like anything else that is not already the right width
+    if e.width == width and e.width > 1:
+        return text
+    return f'resize({text}, {size})'
 
 
 def operand_size (ctx, nodes, target):
