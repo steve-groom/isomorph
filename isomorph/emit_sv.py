@@ -207,6 +207,21 @@ def report_split (block, group, bodies):
         'than its name.\n')
 
 
+def sv_operand (e, wide):
+    """One side of an arithmetic operator, at the width it meets the
+    other side at.
+
+    A narrower operand is extended either way; writing the extension
+    is the difference between a tool doing it quietly and a reader
+    seeing it. A constant already carries its own width, and an
+    integer tree is sized where it is used.
+    """
+    text = sv_expr(e)
+    if e.width >= wide or e.op == 'const' or getattr(e, 'int_tree', False):
+        return text
+    return f"{wide}'({text})"
+
+
 def merge_builds (modules):
     """One module per distinct body, and what each build must override.
 
@@ -1499,7 +1514,17 @@ def sv_expr (e, index = False):
             # a shift amount is self-determined, so it is a count and
             # not a vector: x >> 1, the way it would be typed
             return f'({sv_expr(a[0])} {token} {sv_expr(a[1], True)})'
-        text = f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
+        if token in ('+', '-', '*', '&', '|', '^'):
+            # an operand narrower than the one beside it is extended
+            # to meet it, and Verilator calls that WIDTHEXPAND unless
+            # the extension is written down: pc + last_slot, where the
+            # flag is one bit and the counter twelve, is the shape of
+            # it. Said here, the way the VHDL says it with resize()
+            wide = max(a[0].width, a[1].width)
+            text = (f'({sv_operand(a[0], wide)} {token} '
+                    f'{sv_operand(a[1], wide)})')
+        else:
+            text = f'({sv_expr(a[0])} {token} {sv_expr(a[1])})'
         if e.int_tree:
             # arithmetic on named constants is integer arithmetic, 32
             # bits wide whatever the numbers are. Beside a vector that
