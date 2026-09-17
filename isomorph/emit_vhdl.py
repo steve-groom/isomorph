@@ -1129,16 +1129,21 @@ class Context:
         # generic its signal follows (PARAMETERS.md stage 3)
         self.sig_expr = {}
         self.sig_varying = {}
+        # what declared the name, for the things width and kind alone
+        # cannot answer: an array is one of them
+        self.sig_obj = {}
         for p in module.ports:
             self.sig_width[p.name] = p.width
             self.sig_kind[p.name] = p.kind
             self.sig_expr[p.name] = p.width_expr
             self.sig_varying[p.name] = p.varying_width
+            self.sig_obj[p.name] = p
         for s in module.signals:
             self.sig_width[s.name] = s.width
             self.sig_kind[s.name] = s.kind
             self.sig_expr[s.name] = s.width_expr
             self.sig_varying[s.name] = s.varying_width
+            self.sig_obj[s.name] = s
 
 
 def array_groups (m):
@@ -1381,12 +1386,22 @@ def process_lines (ctx, p):
         var_map[name] = vname
         width = ctx.sig_width[name]
         kind = ctx.sig_kind.get(name, 'vector')
+        obj = ctx.sig_obj.get(name)
         # a process variable is below the constants and may name one
         typ = sl_type(width, kind, None, ctx.m.parameters,
                       ctx.m.constants, ctx.sig_expr.get(name),
                       {**ctx.m.parameters, **ctx.m.constants},
                       ctx.sig_varying.get(name, False))
-        if kind in ('enum', 'struct'):
+        if obj is not None and obj.array:
+            # the variable shadows the whole array, so it is the array
+            # type and not the type of one entry. Declaring it as the
+            # entry made a comb process that writes clocks[0] and
+            # clocks[1] assign a std_logic and then index it, which
+            # ghdl refused and SystemVerilog never noticed
+            typ = (local_array_type(obj, ctx.m)
+                   if hasattr(obj, 'array_expr') else None)
+            typ = typ or array_type_name(obj.name, obj.width, obj.array)
+        elif kind in ('enum', 'struct'):
             found = None
             for s in ctx.m.signals:
                 if s.name == name and s.type is not None:
@@ -1637,7 +1652,7 @@ def vhdl_cmp_bool (ctx, e):
     return f'{left} {vhdl_op} {right}'
 
 
-def vhdl_number (value, width, signed = False):
+def vhdl_number (value, width, signed = False, base = None):
     """A constant in an expression, as the number the author wrote.
 
     Verilog has a sized decimal literal and VHDL does not, so a
@@ -1653,7 +1668,13 @@ def vhdl_number (value, width, signed = False):
     if width == 1:
         return "'1'" if value else "'0'"
     if value == 0 or value == (1 << width) - 1:
-        return vhdl_bits(value, width, signed)
+        return vhdl_bits(value, width, signed, base)
+    if not fits_integer(value):
+        # to_unsigned takes a natural, and VHDL's integer stops at
+        # 2**31-1: to_unsigned(3735928559, 32) is out of range before
+        # it is anything else. 0xDEADBEEF is the example fits_integer
+        # names, and bits are how such a word goes in
+        return vhdl_bits(value, width, signed, base)
     if value < 0 or signed:
         return f'std_logic_vector(to_signed({value}, {width}))'
     return f'std_logic_vector(to_unsigned({value}, {width}))'
@@ -1705,7 +1726,7 @@ def vhdl_expr (ctx, e, index = False):
             return str(int(e.value))
         if e.value is not None and str(e.value) in ctx.int_names:
             return str(e.value)
-        return vhdl_number(e.value, e.width, e.signed)
+        return vhdl_number(e.value, e.width, e.signed, e.base)
     if op == 'enum':
         return e.value.name
     if op == 'bit':
