@@ -217,6 +217,12 @@ def merge_builds (modules):
     text either way; it is one module and one override now.
     """
     from .emit_vhdl import wide_params
+    from .widths import mark_varying_widths
+
+    # before the bodies are compared: a width that varies between
+    # builds keeps its parameter in the type, which is what makes
+    # those bodies the same text and merges them
+    mark_varying_widths(modules)
     by_name = wide_params(modules)
     wide = {}
     for m in modules:
@@ -755,12 +761,16 @@ def param_hi (params, width, locals = None):
 
 
 def packed_type (width, kind = 'vector', typ = None, params = None,
-                 locals = None, width_expr = None, scope = None):
+                 locals = None, width_expr = None, scope = None,
+                 varying = False):
     if kind == 'enum' and typ is not None:
         return typ.name
     if kind == 'struct' and typ is not None:
         return typ.name
-    if width == 1:
+    # one bit is a scalar, unless this width is a parameter that really
+    # varies between builds of the block: then it keeps [WIDTH-1:0] so
+    # every build is the same text and they merge into one module
+    if width == 1 and not varying:
         return 'logic'
     # what the author wrote first, then the width matched back to a
     # parameter by its value, then the number itself
@@ -805,7 +815,8 @@ def port_lines (m):
     dirs = ['input ' if p.direction == 'in' else 'output' for p in ports]
     # a port list is above the localparams and may not name one
     types = [packed_type(p.width, p.kind, p.type, m.parameters,
-                         m.constants, p.width_expr, m.parameters)
+                         m.constants, p.width_expr, m.parameters,
+                         p.varying_width)
              for p in ports]
     names = [f'{p.name} [{p.array}]' if p.array else p.name for p in ports]
     wd = max(len(d) for d in dirs)
@@ -972,7 +983,8 @@ def signal_lines (m):
         lines += comment_lines(s.comments, 4)
         packed = packed_type(s.width, s.kind, s.type, m.parameters,
                              m.constants, s.width_expr,
-                             {**m.parameters, **m.constants})
+                             {**m.parameters, **m.constants},
+                             s.varying_width)
         name = s.name
         if s.array:
             name = f'{name} [{array_size(s, m)}]'

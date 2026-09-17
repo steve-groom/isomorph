@@ -408,7 +408,7 @@ def local_array_lines (m):
         count = constant_expression(s.array_expr, s.array, scope)
         last = f'{count} - 1' if count else str(s.array - 1)
         elem = sl_type(s.width, 'vector', None, m.parameters, m.constants,
-                       s.width_expr, scope)
+                       s.width_expr, scope, s.varying_width)
         line = f'  type {tname} is array (0 to {last}) of {elem};'
         if len(line) <= HOUSE_LIMIT:
             lines.append(line)
@@ -526,12 +526,16 @@ def sl_bound (params, width, locals = None, width_expr = None,
 
 
 def sl_type (width, kind = 'vector', typ = None, params = None,
-             locals = None, width_expr = None, scope = None):
+             locals = None, width_expr = None, scope = None,
+             varying = False):
     if kind == 'enum' and typ is not None:
         return typ.name
     if kind == 'struct' and typ is not None:
         return typ.name
-    if width == 1:
+    # one bit is std_logic, unless this width is a generic that really
+    # varies between builds of the block: then it stays a vector so
+    # every build is the same text and they merge into one entity
+    if width == 1 and not varying:
         return 'std_logic'
     return ('std_logic_vector('
             + sl_bound(params, width, locals, width_expr, scope)
@@ -879,7 +883,7 @@ def port_lines (m):
             # a port list is above the constants and may not name one
             types.append(sl_type(p.width, p.kind, p.type, m.parameters,
                                  m.constants, p.width_expr,
-                                 m.parameters))
+                                 m.parameters, p.varying_width))
     wn = max(len(n) for n in names)
     wd = max(len(d) for d in dirs)
     out = []
@@ -1027,7 +1031,8 @@ def signal_lines (m):
         else:
             typ = sl_type(s.width, s.kind, s.type, m.parameters,
                           m.constants, s.width_expr,
-                          {**m.parameters, **m.constants})
+                          {**m.parameters, **m.constants},
+                          s.varying_width)
         tail = array_init_vhdl(s) if s.array and s.init else ''
         lines += trailing_lines(f'  signal {s.name} : {typ}{tail};',
                                 s.trailing, 2)
@@ -1123,14 +1128,17 @@ class Context:
         # how each width was written, so a process variable follows the
         # generic its signal follows (PARAMETERS.md stage 3)
         self.sig_expr = {}
+        self.sig_varying = {}
         for p in module.ports:
             self.sig_width[p.name] = p.width
             self.sig_kind[p.name] = p.kind
             self.sig_expr[p.name] = p.width_expr
+            self.sig_varying[p.name] = p.varying_width
         for s in module.signals:
             self.sig_width[s.name] = s.width
             self.sig_kind[s.name] = s.kind
             self.sig_expr[s.name] = s.width_expr
+            self.sig_varying[s.name] = s.varying_width
 
 
 def array_groups (m):
@@ -1205,11 +1213,14 @@ def generate_lines (ctx, head):
         kind, payload = head.shape.get(formal, ('same', actual))
         if kind == 'index':
             mapped = f'{payload}({var})'
+            named = formal
         elif payload is None:
             mapped = 'open'
+            named = formal
         else:
             mapped = vhdl_expr(ctx, payload)
-        lines.append(f'        {formal} => {mapped}{comma}')
+            named = formal_name(ctx, child, formal, payload)
+        lines.append(f'        {named} => {mapped}{comma}')
     lines.append('      );')
     lines.append('  end generate;')
     return lines
@@ -1242,6 +1253,31 @@ def guarded_lines (ctx, body, inst):
     return lines
 
 
+def formal_name (ctx, child, formal, actual):
+    """The formal, indexed where the port is a vector and what the
+    parent has is a plain std_logic.
+
+    A width that varies between builds of a block keeps its generic in
+    the type, so at one bit the port is std_logic_vector(0 downto 0)
+    while the signal reaching it is std_logic. VHDL will not associate
+    the two. Indexing the formal says which bit, and it is the one
+    form that works for an out as well as an in: an aggregate on the
+    actual side is an expression, and an expression cannot take a
+    value back out.
+    """
+    if child is None or actual is None:
+        return formal
+    port = next((p for p in child.ports
+                 if p.name == formal and not p.array), None)
+    if port is None or not port.varying_width:
+        return formal
+    if actual.width != 1 or actual.op not in ('ref', 'bit'):
+        return formal
+    if actual.op == 'ref' and ctx.sig_varying.get(str(actual.value)):
+        return formal
+    return f'{formal}(0)'
+
+
 def instance_lines (ctx, inst):
     lines = comment_lines(inst.comments, 2)
     child = ctx.by_name.get(inst.module)
@@ -1265,7 +1301,8 @@ def instance_lines (ctx, inst):
     for i, (formal, actual) in enumerate(formals):
         comma = ',' if i < len(formals) - 1 else ''
         mapped = 'open' if actual is None else vhdl_expr(ctx, actual)
-        lines.append(f'      {formal} => {mapped}{comma}')
+        named = formal_name(ctx, child, formal, actual)
+        lines.append(f'      {named} => {mapped}{comma}')
     lines.append('    );')
     return lines
 
@@ -1347,7 +1384,8 @@ def process_lines (ctx, p):
         # a process variable is below the constants and may name one
         typ = sl_type(width, kind, None, ctx.m.parameters,
                       ctx.m.constants, ctx.sig_expr.get(name),
-                      {**ctx.m.parameters, **ctx.m.constants})
+                      {**ctx.m.parameters, **ctx.m.constants},
+                      ctx.sig_varying.get(name, False))
         if kind in ('enum', 'struct'):
             found = None
             for s in ctx.m.signals:

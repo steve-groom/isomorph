@@ -145,3 +145,43 @@ def width_expression (width_expr, width, scope, lang = 'sv'):
     """
     tree = checked_expression(width_expr, width, scope)
     return None if tree is None else _width_text(_less_one(tree), 0, lang)
+
+
+def mark_varying_widths (modules):
+    """A width that really varies between builds of one block keeps its
+    parameter in the type, even in the build where it is one bit.
+
+    One bit renders as a scalar, which is what a reader wants nearly
+    always: `logic i_data`, not `logic [0:0] i_data`. But a sampler
+    used once on a lock line and once on a pair of pins is one block
+    at two widths, and folding the narrow one to a scalar threw away
+    the name WIDTHD, left the parameter unused and pruned, and made
+    the two bodies different text. They were then emitted as
+    meta_sample_WIDTHD_1 and meta_sample_WIDTHD_2: two files, two
+    names, one design.
+
+    Marked here rather than in the emitters because it cannot be seen
+    from inside one module. The block has to be looked at across every
+    build of it that the design holds, and only a width that really
+    differs is worth the uglier type.
+    """
+    groups = {}
+    for m in modules:
+        groups.setdefault(m.block, []).append(m)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        # by name, because that is what the same thing is called in
+        # every build, and only where the width really moved. A clock
+        # is one bit in every build and stays a scalar, even though
+        # promote_port_widths gave it the name of a width that is one
+        # bit here, which at one bit it cannot tell apart
+        widths = {}
+        for m in group:
+            for item in list(m.ports) + list(m.signals):
+                widths.setdefault(item.name, set()).add(item.width)
+        moved = {name for name, seen in widths.items() if len(seen) > 1}
+        for m in group:
+            for item in list(m.ports) + list(m.signals):
+                if item.name in moved and item.width_expr:
+                    item.varying_width = True

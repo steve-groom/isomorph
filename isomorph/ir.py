@@ -122,6 +122,9 @@ class Sig:
     array_expr: str = None
     # the base a memory image is written in, from preload()
     init_base: str = None
+    # the width really differs between builds of this block, so it
+    # stays a parameter in the type even where it is one bit
+    varying_width: bool = False
 
 
 @dataclass
@@ -137,6 +140,9 @@ class Port:
     attributes: dict = field(default_factory = dict)
     period_ns: float = None    # declared by clock(), for the .sdc
     width_expr: str = None     # the expression the width was written as
+    # the width really differs between builds of this block, so it
+    # stays a parameter in the type even where it is one bit
+    varying_width: bool = False
 
 
 @dataclass
