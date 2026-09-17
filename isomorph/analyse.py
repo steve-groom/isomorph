@@ -251,25 +251,68 @@ class Analyser:
         self.port_domains = {
             p.name: self.domains.get(p.name, set())
             for p in mod.ports if p.direction == 'out'}
+        # an entry of an array port is a domain in its own right: a
+        # monitor releases each reset it makes on its own clock
+        for name, clocks in self.domains.items():
+            base = name.split('[')[0]
+            if base != name and base in self.port_domains:
+                self.port_domains[name] = clocks
         self.port_clocks = self.clock_ports(mod)
         return mod
 
     def clock_ports (self, mod):
-        """The ports of this module that carry a clock.
+        """The ports of this module that carry a clock, an entry of an
+        array port among them.
 
         Its own flops name some; an instance below may name others
         through a port that does nothing here but pass a clock down,
-        which is what a per-domain reset synchroniser looks like.
+        which is what a per-domain reset synchroniser looks like. Both
+        resolve through this module's renames, because a flop clocked
+        on system_clock says the pin system_clock was copied from is
+        the clock port, and the name it was given here is not a port
+        at all.
         """
-        names = {p.clock for p in mod.processes
+        from .emit_c99 import clocked_by
+
+        names = {clocked_by(mod, p) for p in mod.processes
                  if p.kind == 'ff' and p.clock}
         for inst in mod.instances:
             for formal in self.child_clocks.get(inst.module, set()):
-                actual = inst.ports.get(formal)
-                if actual is not None and actual.op == 'ref':
-                    names.add(str(actual.value).split('[')[0])
+                name = self.carried_clock(mod, inst, formal)
+                if name is not None:
+                    names.add(name)
         ports = {p.name for p in mod.ports}
-        return {name for name in names if name in ports}
+        return {name for name in names if name.split('[')[0] in ports}
+
+    def carried_name (self, inst, inner):
+        """What this module calls a signal the child knows as `inner`,
+        or None if nothing here is wired to it.
+
+        An entry of an array port keeps its index: the port is wired
+        whole, so the entry the child used is the same entry here.
+        """
+        from .emit_c99 import outer_clock
+
+        base = inner.split('[')[0]
+        actual = inst.ports.get(base)
+        if actual is None or actual.op != 'ref':
+            return None
+        return outer_clock(base, str(actual.value), inner)
+
+    def carried_clock (self, mod, inst, inner):
+        """The same, for a clock, resolved through this module's
+        renames to the name the domain is really known by.
+
+        A PLL monitor is clocked on one entry of the array of PLL
+        outputs handed to it. Dropping the index made every entry the
+        array itself, so a reset released on entry 0 came back as
+        driven by a clock called monitor0_clocks that nothing else in
+        the design ran on, and everything it reset looked crossed.
+        """
+        from .emit_c99 import alias_source
+
+        name = self.carried_name(inst, inner)
+        return None if name is None else alias_source(mod, name)
 
     def signal_domains (self, mod):
         """Which clock drives each signal, as a set of clock names.
@@ -291,6 +334,14 @@ class Analyser:
                 return False
             dom[name] = before | clocks
             return True
+
+        def carries (name):
+            """What an entry of an array is driven by, or failing that
+            what the array as a whole is: only a few things here know
+            an entry apart, and the rest still read the array."""
+            if name in dom:
+                return dom[name]
+            return dom.get(name.split('[')[0], set())
 
         from .emit_c99 import alias_source, clocked_by
 
@@ -314,19 +365,13 @@ class Analyser:
         for inst in mod.instances:
             child = self.child_domains.get(inst.module, {})
             for formal, clocks in child.items():
-                actual = inst.ports.get(formal)
-                if actual is None or actual.op != 'ref':
+                target = self.carried_name(inst, formal)
+                if target is None:
                     continue
-                outer = set()
-                for clock in clocks:
-                    carried = inst.ports.get(clock)
-                    if carried is not None and carried.op == 'ref':
-                        # resolve before dropping the index: the element
-                        # of an array gathered from a pin is a rename of
-                        # that pin, and the array is not a domain
-                        name = alias_source(mod, str(carried.value))
-                        outer.add(name.split('[')[0])
-                add(str(actual.value).split('[')[0], outer)
+                outer = {name for name in
+                         (self.carried_clock(mod, inst, clock)
+                          for clock in clocks) if name is not None}
+                add(target, outer)
         changed = True
         rounds = 0
         while changed and rounds < 64:
@@ -336,14 +381,14 @@ class Analyser:
                 if p.kind != 'comb':
                     continue
                 carried = set()
-                for name in body_reads(p.body):
-                    carried |= dom.get(name, set())
+                for name in body_reads(p.body, indexed = True):
+                    carried |= carries(name)
                 for name in body_writes(p.body):
                     changed = add(name, carried) or changed
             for a in mod.assigns:
                 carried = set()
-                for name in expr_refs(a.value):
-                    carried |= dom.get(name, set())
+                for name in expr_refs(a.value, indexed = True):
+                    carried |= carries(name)
                 changed = add(root_name(a.target), carried) or changed
         return dom
 
@@ -370,6 +415,8 @@ class Analyser:
                   if SYNC_ATTRIBUTE in (s.attributes or {})}
         marked |= {p.name for p in mod.ports
                    if SYNC_ATTRIBUTE in (p.attributes or {})}
+        from .emit_c99 import clocked_by
+
         width = {s.name: s.width for s in mod.signals}
         width.update({p.name: p.width for p in mod.ports})
         found = []
@@ -378,13 +425,14 @@ class Analyser:
                 continue
             targets = body_writes(p.body)
             synchroniser = bool(targets) and targets <= marked
+            clock = clocked_by(mod, p)
             for name in sorted(body_reads(p.body)):
-                other = dom.get(name, set()) - {p.clock}
+                other = dom.get(name, set()) - {clock}
                 if not other:
                     continue
                 for source in sorted(other):
                     found.append({'signal': name, 'from': source,
-                                  'to': p.clock, 'process': p.name,
+                                  'to': clock, 'process': p.name,
                                   'width': width.get(name, 1),
                                   'synchronised': synchroniser})
                 if synchroniser:
@@ -424,28 +472,25 @@ class Analyser:
 
     def instance_crossings (self, mod, dom, width):
         """A child on one clock handed a value another clock drives."""
-        from .emit_c99 import alias_source
-
         found = []
         for inst in mod.instances:
             formals = self.child_clocks.get(inst.module, set())
-            here = set()
-            for formal in formals:
-                actual = inst.ports.get(formal)
-                if actual is not None and actual.op == 'ref':
-                    name = alias_source(mod, str(actual.value))
-                    here.add(name.split('[')[0])
+            clock_ports = {formal.split('[')[0] for formal in formals}
+            here = {name for name in
+                    (self.carried_clock(mod, inst, formal)
+                     for formal in formals) if name is not None}
             if not here:
                 continue
             directions = self.child_directions.get(inst.module, {})
             accepted = self.child_sync.get(inst.module, set())
             for formal, actual in inst.ports.items():
-                if formal in formals or actual is None:
+                if formal in clock_ports or actual is None:
                     continue
                 if actual.op != 'ref' or directions.get(formal) != 'in':
                     continue
-                name = str(actual.value).split('[')[0]
-                other = dom.get(name, set()) - here
+                name = str(actual.value)
+                other = dom.get(name, dom.get(name.split('[')[0], set()))
+                other = other - here
                 if not other:
                     continue
                 synchronised = formal in accepted
@@ -453,7 +498,7 @@ class Analyser:
                     found.append({'signal': name, 'from': source,
                                   'to': sorted(here)[0],
                                   'process': inst.name,
-                                  'width': width.get(name, 1),
+                                  'width': width.get(name.split('[')[0], 1),
                                   'synchronised': synchronised})
                 if synchronised:
                     continue
@@ -483,7 +528,7 @@ class Analyser:
     def report_instance_crossing (self, mod, inst, formal, name, other,
                                   width):
         listed = ', '.join(sorted(other))
-        bits = width.get(name, 1)
+        bits = width.get(name.split('[')[0], 1)
         if bits > 1:
             raise ConversionError(
                 f'{inst.name}.{formal} is given {name}, {bits} bits '
@@ -758,11 +803,12 @@ class Analyser:
             self.check_async_reset(body, reset, proc)
             # the construct will not build without a reason, so every
             # one of these is a circuit whose author has already said
-            # why it is right. Announcing it is useful; calling it
-            # severe on every run only teaches the reader to skip the
-            # word where it means a latch
+            # why it is right, and recovery and removal on it are
+            # timed by the fitter like any other path. Saying it
+            # happened is worth a line; calling it a warning on every
+            # run only teaches the reader to skip the word
             self.warnings.append(
-                proc.name + ': asynchronous reset on ' + reset
+                'info: ' + proc.name + ': asynchronous reset on ' + reset
                 + ' (' + proc.reason + ')')
         return ir.Process(proc.name, proc.kind,
                           self.name_of(proc.clock) if proc.clock else None,
@@ -2047,33 +2093,37 @@ def root (expr):
 SYNC_ATTRIBUTE = 'async_reg'
 
 
-def body_reads (body):
-    """Every signal read anywhere in these statements."""
+def body_reads (body, indexed = False):
+    """Every signal read anywhere in these statements.
+
+    With indexed set, an entry of an array is named as the entry it
+    is rather than as the array, which is what tracking a clock domain
+    through a per-domain array of resets needs."""
     names = set()
     for s in body or []:
         if isinstance(s, ir.Assign):
-            names |= expr_refs(s.value)
+            names |= expr_refs(s.value, indexed)
             # an indexed target reads its index
             target = s.target
             while target.op in ('slice', 'bit', 'part', 'part_down',
                                 'field'):
                 for arg in target.args[1:]:
-                    names |= expr_refs(arg)
+                    names |= expr_refs(arg, indexed)
                 target = target.args[0]
         elif isinstance(s, ir.If):
             for cond, inner in s.branches:
-                names |= expr_refs(cond)
-                names |= body_reads(inner)
+                names |= expr_refs(cond, indexed)
+                names |= body_reads(inner, indexed)
         elif isinstance(s, ir.Match):
-            names |= expr_refs(s.subject)
+            names |= expr_refs(s.subject, indexed)
             for _, inner in s.arms:
-                names |= body_reads(inner)
+                names |= body_reads(inner, indexed)
         elif isinstance(s, ir.For):
-            names |= body_reads(s.body)
+            names |= body_reads(s.body, indexed)
         elif isinstance(s, ir.Assert):
-            names |= expr_refs(s.cond)
+            names |= expr_refs(s.cond, indexed)
         elif isinstance(s, ir.Return):
-            names |= expr_refs(s.value)
+            names |= expr_refs(s.value, indexed)
     return names
 
 
@@ -2100,14 +2150,15 @@ def root_name (expr):
     return str(expr.value).split('[')[0] if expr.op == 'ref' else ''
 
 
-def expr_refs (e):
+def expr_refs (e, indexed = False):
     names = set()
     if e is None:
         return names
     if e.op == 'ref':
-        names.add(str(e.value).split('[')[0])
+        name = str(e.value)
+        names.add(name if indexed else name.split('[')[0])
     for arg in getattr(e, 'args', []) or []:
-        names |= expr_refs(arg)
+        names |= expr_refs(arg, indexed)
     return names
 
 

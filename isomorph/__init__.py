@@ -92,6 +92,9 @@ def convert (top, dump_ir = None, sv = None, vhdl = None, c99 = None,
             if 'severe:' in w:
                 text = ' '.join(w.replace('severe:', '', 1).split())
                 print('severe:', text, file = sys.stderr)
+            elif 'info:' in w:
+                text = ' '.join(w.replace('info:', '', 1).split())
+                print('info:', text, file = sys.stderr)
             else:
                 print('warning:', w, file = sys.stderr)
 
